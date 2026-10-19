@@ -56,8 +56,10 @@ jobs:
       - name: Set the project version
         run: mvn -B -q versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
 
+      # The Java tests load libnativepath, which `cargo test` does not produce: build it first, as ci.yml does.
       - name: Tests before packaging
         run: |
+          cargo build --release -p np-ffi
           cargo test --release --workspace
           mvn -B -q verify
 
