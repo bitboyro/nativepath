@@ -62,6 +62,18 @@ public class ServerResidueScanTest {
                 && matchesMasked(s, BEARER.length, TOKEN_MASKED);
     }
 
+    /** What the control route read, kept alive the way application code that holds a value would. Without
+     *  it the scan's System.gc() lets the collector release (and the OS zero) the pages holding the
+     *  dead strings, and a control that is sometimes found proves nothing. */
+    static final java.util.ArrayDeque<String> RETAINED = new java.util.ArrayDeque<>();
+
+    static void retain(String s) {
+        synchronized (RETAINED) {
+            RETAINED.addLast(s);
+            while (RETAINED.size() > 8) RETAINED.removeFirst();
+        }
+    }
+
     @SpringBootConfiguration
     @EnableAutoConfiguration
     static class App {
@@ -79,6 +91,8 @@ public class ServerResidueScanTest {
                     // The usual Spring way: header and body become Java strings.
                     .POST("/control", req -> req.bodyToMono(String.class).flatMap(body -> {
                         String auth = req.headers().firstHeader("Authorization");
+                        retain(auth);
+                        retain(body);
                         return ServerResponse.ok().bodyValue("read " + (auth == null ? 0 : auth.length()) + "+" + body.length() + " chars");
                     }))
                     .build();

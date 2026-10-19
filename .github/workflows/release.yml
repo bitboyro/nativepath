@@ -54,7 +54,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Set the project version
-        run: mvn -B -q versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+        # the plugin by full coordinates: resolving the short prefix needs plugin-group metadata from Central, which
+        # has failed transiently on a runner
+        run: mvn -B -q org.codehaus.mojo:versions-maven-plugin:2.17.1:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
 
       # No tests here: ci.yml runs the whole suite on the same push, and the Docker check below runs the
       # memory proofs and a wiring pass in the image.
