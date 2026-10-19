@@ -1,0 +1,53 @@
+# The benchmark in Docker. Use np-benchmarks/bench.sh rather than calling this directly.
+#
+#   bench      the image: np-bench is its entrypoint; SYS_PTRACE lets the memory scans read the process
+#              (process_vm_readv; the default seccomp profile allows it with this capability)
+#   pg-prep    writes the database experiment's passwords and certificates into the shared volume
+#   postgres   PostgreSQL 17 with SCRAM and TLS, reached by the bench container as "postgres"
+#              (profile db: bench.sh starts it for the database experiment)
+name: np-bench
+services:
+  bench:
+    image: ${NP_IMAGE:-np-bench:local}
+    build:
+      context: ../..
+      dockerfile: np-benchmarks/docker/Dockerfile
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-rockylinux:8}
+        JDK_MAJOR: ${JDK_MAJOR:-23}
+        RUST_VERSION: ${RUST_VERSION:-1.99.1}
+        MAVEN_VERSION: ${MAVEN_VERSION:-3.9.13}
+        NP_VERSION: ${NP_VERSION:-0.1.0-dev}
+    cap_add: [SYS_PTRACE]
+    init: true
+    environment:
+      NP_HOST_INFO: ${NP_HOST_INFO:-}
+      NP_PG_HOST: ${NP_PG_HOST:-}
+      NP_PG_PORT: ${NP_PG_PORT:-}
+      NP_PG_DIR: ${NP_PG_DIR:-}
+    volumes:
+      - ${NP_RESULTS:-../../np-results}:/work/np-results
+      - pg:/pg
+  pg-prep:
+    image: ${NP_IMAGE:-np-bench:local}
+    profiles: [db]
+    entrypoint: ["/opt/np/np-benchmarks/pg_test_db.sh", "--prepare", "/pg"]
+    user: "0:0"
+    volumes: [pg:/pg]
+  postgres:
+    image: postgres:17-alpine
+    profiles: [db]
+    depends_on:
+      pg-prep: { condition: service_completed_successfully }
+    environment:
+      POSTGRES_USER: np
+      POSTGRES_DB: np
+      POSTGRES_PASSWORD_FILE: /pg/password.txt
+    volumes: [pg:/pg:ro]
+    entrypoint: ["sh", "-c", "cp /pg/certs/server.crt /pg/certs/server.key /var/lib/postgresql/ && chown postgres /var/lib/postgresql/server.crt /var/lib/postgresql/server.key && chmod 600 /var/lib/postgresql/server.key && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U np -d np -h 127.0.0.1"]
+      interval: 2s
+      retries: 60
+volumes:
+  pg:

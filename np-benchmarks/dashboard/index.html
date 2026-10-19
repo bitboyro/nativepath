@@ -1,0 +1,1019 @@
+<title>np-bench Live</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a run plan on the left, one view per test type on the right. Every view answers the same
+   three questions in the same places: how fast now (gauge or strip), how it moves (charts), what has
+   finished (table or checklist). Fixed colors per entity: blue = NativePath, orange = the reference. */
+:root {
+  --bg: #f2f3f1; --panel: #fcfcfb; --panel-2: #f5f6f4; --line: #e1e3de; --line-2: #c9ccc5;
+  --fg: #0b0b0b; --fg-2: #52514e; --fg-3: #75746f;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101110; --panel: #1a1a19; --panel-2: #212120; --line: #2d2e2b; --line-2: #42433f;
+    --fg: #f0efec; --fg-2: #c3c2b7; --fg-3: #8f8e86;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101110; --panel: #1a1a19; --panel-2: #212120; --line: #2d2e2b; --line-2: #42433f;
+  --fg: #f0efec; --fg-2: #c3c2b7; --fg-3: #8f8e86;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font-ui);
+  padding-block: 14px 28px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3, p { margin: 0; }
+button { font: inherit; color: inherit; }
+.mono, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+
+.app { max-width: 1280px; margin: 0 auto; display: grid; gap: 12px; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 4px 0 2px; }
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand h1 { font: 600 18px var(--font-mono); letter-spacing: -0.01em; }
+.brand span { color: var(--fg-3); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.runmeta { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.tag { font: 12px var(--font-mono); color: var(--fg-2); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.tag.sim { color: var(--fg); border-color: var(--warn); }
+.ctl { display: flex; gap: 6px; align-items: center; }
+.btn { background: var(--panel); border: 1px solid var(--line-2); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.btn:hover { border-color: var(--fg-3); }
+.btn[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+.body { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 12px; align-items: start; }
+.plan { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; gap: 2px; position: sticky; top: 8px; }
+.plan h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-3); padding: 2px 8px 6px; font-weight: 500; }
+.step { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: start; text-align: left; background: none; border: 0; border-radius: 6px; padding: 7px 8px; cursor: pointer; }
+.step:hover { background: var(--panel-2); }
+.step[aria-current="true"] { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--s1); }
+.step b { font-weight: 500; display: block; }
+.step small { color: var(--fg-3); font-size: 12px; }
+.ico { width: 16px; height: 16px; margin-top: 2px; }
+
+main { display: grid; gap: 12px; min-width: 0; }
+.strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.mini { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.mini .l { font-size: 12px; color: var(--fg-3); display: flex; justify-content: space-between; gap: 8px; }
+.mini .v { font: 500 15px var(--font-mono); }
+.bar { height: 5px; background: var(--panel-2); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--fg-3); border-radius: 3px; }
+
+.vhead { display: grid; gap: 4px; }
+.vhead .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.vhead h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+.kind { font: 11px var(--font-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--fg-2); border: 1px solid var(--line-2); border-radius: 4px; padding: 1px 6px; }
+.vhead p { color: var(--fg-2); max-width: 78ch; }
+.prog { display: flex; align-items: center; gap: 10px; color: var(--fg-2); font-size: 12px; }
+.prog .bar { flex: 1; margin: 0; height: 6px; }
+.prog .bar i { background: var(--s1); }
+
+.grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; grid-column: span 6; }
+.card.c4 { grid-column: span 4; } .card.c5 { grid-column: span 5; } .card.c7 { grid-column: span 7; } .card.c8 { grid-column: span 8; } .card.c12 { grid-column: span 12; }
+.card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-3); font-weight: 500; margin-bottom: 8px; display: flex; justify-content: space-between; gap: 8px; }
+.card h3 em { font-style: normal; text-transform: none; letter-spacing: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--fg-2); margin-top: 6px; }
+.legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px 12px; margin: 8px 0 0; }
+.kv div { min-width: 0; }
+.kv dt { font-size: 12px; color: var(--fg-3); }
+.kv dd { margin: 0; font: 500 16px var(--font-mono); }
+.kv dd small { font-size: 12px; color: var(--fg-3); font-weight: 400; }
+.big { font: 500 34px/1.1 var(--font-mono); letter-spacing: -0.02em; }
+.big small { font-size: 14px; color: var(--fg-3); font-weight: 400; letter-spacing: 0; }
+
+svg text { font-family: var(--font-mono); fill: var(--fg-3); font-size: 11px; }
+svg .gl { stroke: var(--line); stroke-width: 1; }
+svg .ax { stroke: var(--line-2); stroke-width: 1; }
+svg .dash { stroke: var(--fg-3); stroke-dasharray: 4 4; stroke-width: 1; fill: none; }
+svg .xh { stroke: var(--fg-3); stroke-width: 1; }
+svg .vm { stroke: var(--fg-3); stroke-width: 1; stroke-dasharray: 2 3; }
+svg .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+svg .gauge-track { fill: none; stroke: var(--panel-2); stroke-width: 14; stroke-linecap: round; }
+svg .gauge-val { fill: none; stroke-width: 14; stroke-linecap: round; }
+svg .needle { stroke: var(--fg); stroke-width: 2; stroke-linecap: round; }
+svg .hub { fill: var(--fg); stroke: var(--panel); stroke-width: 3; }
+svg .gnum { fill: var(--fg); font: 500 24px var(--font-mono); }
+svg .glabel { fill: var(--fg-3); font-size: 11px; }
+svg .tickm { stroke: var(--line-2); stroke-width: 1; }
+svg .peak { stroke: var(--fg); stroke-width: 2; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-weight: 500; font-size: 12px; color: var(--fg-3); padding: 4px 8px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+td.r, th.r { text-align: right; padding-right: 0; padding-left: 14px; white-space: nowrap; }
+th.r + th:not(.r), td.r + td:not(.r) { padding-left: 18px; }
+tr.pick { cursor: pointer; }
+tr.pick:hover td { background: var(--panel-2); }
+tr.pick.on td { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--s1); }
+th.pl, td.pl { padding-left: 18px; }
+.start { align-self: start; }
+.tw { overflow-x: auto; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+.cellbar { display: inline-block; height: 6px; border-radius: 3px; vertical-align: middle; margin-left: 8px; min-width: 2px; }
+
+.chip { display: inline-flex; align-items: center; gap: 5px; font: 12px var(--font-ui); padding: 1px 8px 1px 6px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--fg); white-space: nowrap; }
+.chip svg { width: 12px; height: 12px; }
+.chip.good svg { color: var(--good); } .chip.crit { border-color: var(--crit); } .chip.crit svg { color: var(--crit); }
+.chip.warn svg { color: var(--warn); } .chip.run svg { color: var(--s1); } .chip.idle svg { color: var(--fg-3); }
+
+.segs { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; margin-top: 4px; }
+.segs i { height: 18px; border-radius: 3px; background: var(--panel-2); }
+.segs i.on { background: var(--s1); }
+.rows { display: grid; gap: 8px; }
+.route { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(0, 2fr) 92px 70px; gap: 10px; align-items: center; font-size: 13px; }
+.route .bar { margin: 0; height: 8px; }
+.route .bar i { background: var(--s1); }
+.route code { font: 12px var(--font-mono); color: var(--fg-2); }
+.note { color: var(--fg-3); font-size: 12px; }
+.banner { display: none; border: 1px solid var(--crit); border-radius: 8px; padding: 8px 12px; background: var(--panel); }
+.banner.on { display: block; }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+summary { cursor: pointer; font-weight: 500; }
+details p { color: var(--fg-2); margin: 8px 0; max-width: 80ch; }
+details code, .note code { font: 12px var(--font-mono); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+#tip { position: fixed; z-index: 20; pointer-events: none; background: var(--fg); color: var(--bg); border-radius: 6px; padding: 6px 9px; font: 12px/1.35 var(--font-mono); max-width: 260px; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+#tip b { font-weight: 500; }
+
+body:not([data-tab="demo"]) .ctl { display: none; }
+.tabs { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.tab { background: none; border: 0; border-radius: 6px; padding: 4px 12px; cursor: pointer; color: var(--fg-2); }
+.tab:hover { color: var(--fg); }
+.tab[aria-selected="true"] { background: var(--fg); color: var(--bg); }
+.vtools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 8px; }
+.seg { display: inline-flex; gap: 0; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; }
+.seg .btn { border: 0; border-radius: 0; }
+.seg .btn + .btn { border-left: 1px solid var(--line-2); }
+.btn.primary { background: var(--s1); color: #fff; border-color: var(--s1); font-weight: 500; padding: 6px 16px; }
+.btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+.sparks { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.spark { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px 2px; min-width: 0; }
+.spark .l { font-size: 11px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spark .v { font: 500 15px var(--font-mono); }
+.ovc { text-align: left; cursor: pointer; font: inherit; color: inherit; width: 100%; }
+.ovc:hover { border-color: var(--fg-3); }
+.expsets { display: grid; gap: 8px; margin-top: 12px; }
+.expset { padding: 8px 12px; }
+.expset summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.flds { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 16px; margin-top: 10px; }
+.fld { display: grid; gap: 3px; align-content: start; min-width: 0; }
+.fld > span { font-size: 12px; color: var(--fg-2); }
+.fld em { font-style: normal; color: var(--fg-3); }
+.fld small { color: var(--fg-3); font-size: 11px; line-height: 1.3; }
+.fld input, .fld select { font: 13px var(--font-mono); background: var(--panel-2); color: var(--fg); border: 1px solid var(--line-2); border-radius: 6px; padding: 5px 8px; min-width: 0; width: 100%; }
+.fld.changed input, .fld.changed select { border-color: var(--s1); }
+@media (max-width: 900px) {
+  .tabs { order: 2; }
+  .top { align-items: flex-start; }
+  .runmeta { flex-basis: 100%; order: 3; }
+  .tag { white-space: normal; }
+  .prog { flex-wrap: wrap; }
+  .prog .bar { flex: 1 1 100%; }
+  .body { grid-template-columns: minmax(0, 1fr); }
+  .plan { position: static; display: flex; overflow-x: auto; gap: 4px; }
+  .plan h2 { display: none; }
+  .step { grid-template-columns: 18px auto; white-space: nowrap; }
+  .step small { display: none; }
+  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card, .card.c4, .card.c5, .card.c7, .card.c8 { grid-column: span 12; }
+  .route { grid-template-columns: 1fr 70px; }
+  .route .bar { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand"><h1>np-bench</h1></div>
+    <nav class="tabs" id="tabs" aria-label="Views"></nav>
+    <div class="runmeta" id="runmeta"></div>
+    <div class="ctl">
+      <button class="btn" id="pause" type="button" aria-pressed="false">Pause</button>
+      <button class="btn" id="spd" type="button" title="Simulation speed">1×</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <nav class="plan" aria-label="Run plan"><h2>Run plan</h2><div id="steps" style="display:contents"></div></nav>
+    <main>
+      <div class="banner" id="note"></div>
+      <div class="strip" id="strip"></div>
+      <div class="vhead" id="vhead"></div>
+      <div id="view"></div>
+      <div class="card c12" id="tablecard" hidden><h3>Data table <em id="tabletitle"></em></h3><div class="tw"><table id="datatable"></table></div></div>
+      <details id="datafeed" hidden>
+        <summary>What np-bench sends to this page</summary>
+        <p>This tab shows simulated values. In a real run, <code>np-bench</code> writes every measurement as it happens to <code>events.jsonl</code>, one JSON object per line, and <code>np-bench serve</code> streams it to this page; the summary lands in <code>results.json</code>. Each event has <code>t</code> (epoch milliseconds), <code>type</code> and <code>exp</code>. Everything collected is kept; the views show the relevant metrics and the <em>More metrics</em> button shows the rest.</p>
+        <div class="tw"><table>
+          <tr><th>Test</th><th>Events</th><th>Fields</th></tr>
+          <tr><td>Throughput, ramp, soak, scan, correctness</td><td><code>tick</code> once a second, from the load generator</td><td>sec, phase, rps, p50_us, p99_us, p999_us, max_us, errors, shed, mb_s, verified, mismatches, conns, target_rps, plus the run's tags (config, scenario, round, route, server)</td></tr>
+          <tr><td>Throughput, ramp</td><td><code>measurement</code>, <code>result</code> per measurement</td><td>the window's totals, server_cpu_s, JVM allocation before and after</td></tr>
+          <tr><td>Soak</td><td><code>sample</code> every few seconds, from the host sampler</td><td>rss_mb, cpu_pct, machine_cpu_pct, threads, fds, heap_used_mb, heap_committed_mb, nonheap_mb, other_mb, gc_count, gc_ms</td></tr>
+          <tr><td>Memory proofs, scan, soak, database</td><td><code>scan</code></td><td>scenario, expected (0 or min1), found_token, found_password, found, ms, ok</td></tr>
+          <tr><td>Database</td><td><code>tick</code>, <code>result</code></td><td>driver, scenario, ops_s, rows_s, p50_us, p99_us, errors, pool_in_use, pool_waiting</td></tr>
+          <tr><td>Every run</td><td><code>run</code>, <code>exp</code>, <code>machine</code>, <code>run_end</code></td><td>settings, hosts, commit; start and end of each experiment</td></tr>
+        </table></div>
+      </details>
+    </main>
+  </div>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const fmt = n => Math.round(n).toLocaleString('en-US');
+const fk = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(Math.round(n));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const mb = n => n.toFixed(n >= 100 ? 0 : 1);
+const ms = us => us == null ? '–' : us >= 1e6 ? (us / 1e6).toFixed(us >= 1e7 ? 0 : 1) + ' s' : us >= 1000 ? (us / 1000).toFixed(us >= 10000 ? 0 : 1) + ' ms' : Math.round(us) + ' µs';
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+let R = rng(11);
+const jit = (v, p) => v * (1 + (R() - .5) * 2 * p);
+
+const ICON = {
+  good: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></svg>',
+  crit: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+  warn: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5l7 12.5H1z"/></svg>',
+  run: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg>',
+  idle: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="4.5"/></svg>'
+};
+const chip = (k, t) => `<span class="chip ${k}">${ICON[k]}${t}</span>`;
+const legend = items => `<div class="legend">${items.map(i => `<span><i style="background:${i[1]}"></i>${i[0]}</span>`).join('')}</div>`;
+
+/* ---------- tooltip ---------- */
+const tip = $('#tip');
+function showTip(html, x, y) { tip.innerHTML = html; tip.hidden = false; const w = tip.offsetWidth; tip.style.left = Math.max(8, Math.min(innerWidth - w - 8, x + 14)) + 'px'; tip.style.top = Math.max(8, y - tip.offsetHeight - 10) + 'px'; }
+const hideTip = () => { tip.hidden = true; };
+
+/* ---------- line / area chart ---------- */
+function niceMax(v) { const e = Math.pow(10, Math.floor(Math.log10(v || 1))); const f = v / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 4 ? 4 : f <= 8 ? 8 : 10) * e; }
+function chart(el, o) {
+  const tiny = !!o.tiny, W = Math.max(tiny ? 80 : 260, el.clientWidth || 560), H = o.height || 170, m = tiny ? { l: 4, r: 8, t: 6, b: 4 } : { l: o.ml || 46, r: 14, t: 10, b: 22 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const N = o.n || Math.max(2, ...o.series.map(s => s.values.length));
+  const vals = o.series.flatMap(s => s.values.filter(v => v != null));
+  const ymin = o.ymin || 0;
+  const ymax = o.ymax != null ? o.ymax : niceMax(Math.max(...vals, o.hline ? o.hline.v : 0, 1e-9) * 1.1);
+  const lg = Math.log10, X = i => m.l + (N <= 1 ? 0 : i / (N - 1) * iw);
+  const Y = o.log ? (v => m.t + ih - (lg(Math.max(v, ymin)) - lg(ymin)) / (lg(ymax) - lg(ymin)) * ih) : (v => m.t + ih - (v - ymin) / (ymax - ymin) * ih);
+  let g = '';
+  const ticks = o.log ? Array.from({ length: Math.round(lg(ymax / ymin)) + 1 }, (_, k) => ymin * Math.pow(10, k)) : [0, 1, 2, 3, 4].map(k => ymin + (ymax - ymin) * k / 4);
+  if (!tiny) ticks.forEach(v => { const y = Y(v); g += `<line class="gl" x1="${m.l}" x2="${W - m.r}" y1="${y}" y2="${y}"/><text x="${m.l - 6}" y="${y + 4}" text-anchor="end">${o.yfmt ? o.yfmt(v) : fk(v)}</text>`; });
+  if (!tiny) g += `<line class="ax" x1="${m.l}" x2="${W - m.r}" y1="${m.t + ih}" y2="${m.t + ih}"/>`;
+  if (tiny) { /* no labels */ } else if (o.cats) o.cats.forEach((c, i) => { g += `<text x="${X(i)}" y="${H - 5}" text-anchor="middle">${c}</text>`; });
+  else if (o.left && o.xl) g += `<text x="${m.l}" y="${H - 5}">${o.xl[0]}</text><text x="${m.l + iw / 2}" y="${H - 5}" text-anchor="middle">${o.xl[1]}</text><text x="${W - m.r}" y="${H - 5}" text-anchor="end">${o.xl[2]}</text>`;
+  else { const u = o.unit || 's'; g += `<text x="${m.l}" y="${H - 5}">−${N - 1}${u}</text><text x="${m.l + iw / 2}" y="${H - 5}" text-anchor="middle">−${Math.round((N - 1) / 2)}${u}</text><text x="${W - m.r}" y="${H - 5}" text-anchor="end">now</text>`; }
+  (o.vmarks || []).forEach(v => { if (v.k >= 0 && v.k < N) g += `<line class="vm" x1="${X(v.k)}" x2="${X(v.k)}" y1="${m.t}" y2="${m.t + ih}"/>`; });
+  if (o.hline) { const y = Y(o.hline.v); g += `<line class="dash" x1="${m.l}" x2="${W - m.r}" y1="${y}" y2="${y}"/><text x="${W - m.r - 2}" y="${y - 5}" text-anchor="end">${o.hline.label}</text>`; }
+  const geo = [];
+  o.series.forEach((s, si) => {
+    const off = o.left ? 0 : N - s.values.length; const pts = [];
+    s.values.forEach((v, k) => { if (v != null) pts.push([X(off + k), Y(v), k]); });
+    if (!pts.length) return;
+    let d = '';
+    pts.forEach((p, i) => { d += i ? (o.step ? `H${p[0].toFixed(1)}V${p[1].toFixed(1)}` : `L${p[0].toFixed(1)} ${p[1].toFixed(1)}`) : `M${p[0].toFixed(1)} ${p[1].toFixed(1)}`; });
+    if (s.fill !== false && si === 0) g += `<path d="${d}L${pts[pts.length - 1][0].toFixed(1)} ${m.t + ih}L${pts[0][0].toFixed(1)} ${m.t + ih}Z" style="fill:${s.color};opacity:.13"/>`;
+    g += `<path class="ln" d="${d}" style="stroke:${s.color}${s.dash ? ';stroke-dasharray:5 4' : ''}"/>`;
+    if (o.dots) pts.forEach(p => { g += `<circle cx="${p[0]}" cy="${p[1]}" r="4" style="fill:${s.color};stroke:var(--panel);stroke-width:2"/>`; });
+    else { const p = pts[pts.length - 1]; g += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" style="fill:${s.color};stroke:var(--panel);stroke-width:2"/>`; }
+  });
+  el._geo = { X, N, m, iw, W, H, o };
+  if (el._hi != null && el._hi >= 0 && el._hi < N) g += `<line class="xh" x1="${X(el._hi)}" x2="${X(el._hi)}" y1="${m.t}" y2="${m.t + ih}"/>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${o.label || 'chart'}">${g}</svg>`;
+  if (!el._bound) {
+    el._bound = true; el.style.position = 'relative';
+    el.addEventListener('pointermove', e => {
+      const G = el._geo; if (!G) return;
+      const x = e.clientX - el.getBoundingClientRect().left;
+      const i = clamp(Math.round((x - G.m.l) / G.iw * (G.N - 1)), 0, G.N - 1); el._hi = i;
+      let h = '';
+      if (G.o.cats) h += `<b>${G.o.cats[i] || ''}</b><br>`;
+      else if (G.o.left) h += `<b>${i}${G.o.unit || 's'}</b><br>`;
+      else h += `<b>${i === G.N - 1 ? 'now' : '−' + (G.N - 1 - i) + (G.o.unit || 's')}</b><br>`;
+      G.o.series.forEach(s => { const v = s.values[i - (G.o.left ? 0 : G.N - s.values.length)]; if (v != null) h += `${s.name}: ${G.o.tipfmt ? G.o.tipfmt(v) : (G.o.yfmt || fk)(v)}<br>`; });
+      showTip(h, e.clientX, e.clientY); draw();
+    });
+    el.addEventListener('pointerleave', () => { el._hi = null; hideTip(); draw(); });
+  }
+}
+
+/* ---------- gauge ---------- */
+function gauge(el, o) {
+  const cx = 120, cy = 108, r = 88;
+  const ang = f => Math.PI * (1 - f), pt = (f, rr) => [cx + rr * Math.cos(ang(f)), cy - rr * Math.sin(ang(f))];
+  const arc = (f0, f1) => { const a = pt(f0, r), b = pt(f1, r); return `M${a[0].toFixed(1)} ${a[1].toFixed(1)}A${r} ${r} 0 0 1 ${b[0].toFixed(1)} ${b[1].toFixed(1)}`; };
+  const f = clamp(o.value / o.max, 0, 1); let g = `<path class="gauge-track" d="${arc(0, 1)}"/>`;
+  if (f > 0.004) g += `<path class="gauge-val" d="${arc(0, f)}" style="stroke:${o.color}"/>`;
+  for (let k = 0; k <= 10; k++) { const a = pt(k / 10, r - 15), b = pt(k / 10, r - (k % 5 ? 20 : 24)); g += `<line class="tickm" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`; }
+  if (o.peak) { const a = pt(clamp(o.peak / o.max, 0, 1), r + 11), b = pt(clamp(o.peak / o.max, 0, 1), r - 11); g += `<line class="peak" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`; }
+  const n = pt(f, r - 26); g += `<line class="needle" x1="${cx}" y1="${cy}" x2="${n[0].toFixed(1)}" y2="${n[1].toFixed(1)}"/><circle class="hub" cx="${cx}" cy="${cy}" r="6"/>`;
+  g += `<text class="glabel" x="${cx - r}" y="${cy + 18}" text-anchor="middle">0</text><text class="glabel" x="${cx + r}" y="${cy + 18}" text-anchor="middle">${o.maxLabel}</text>`;
+  g += `<text class="gnum" x="${cx}" y="${cy + 38}" text-anchor="middle">${o.text}</text>`;
+  el.innerHTML = `<svg viewBox="0 0 240 150" width="100%" style="max-width:300px;display:block;margin:0 auto" role="img" aria-label="${o.label}">${g}</svg>`;
+}
+
+/* ---------- shared pieces ---------- */
+const col = { np: 'var(--s1)', ref: 'var(--s2)', ref2: 'var(--s3)' };
+const win = (arr, n) => arr.slice(-n);
+function head(v, extra) {
+  $('#vhead').innerHTML = `<div class="row"><h2>${v.title}</h2><span class="kind">${v.kind}</span></div><p>${v.blurb}</p>${extra || ''}`;
+}
+const progress = (label, f) => `<div class="prog"><span>${label}</span><div class="bar"><i style="width:${(clamp(f, 0, 1) * 100).toFixed(1)}%"></i></div></div>`;
+
+/* ---------- views ---------- */
+const V = {};
+
+/* 1. Throughput, closed loop */
+V.throughput = {
+  title: 'Throughput and latency', kind: 'closed loop',
+  blurb: 'Every connection sends its next request as soon as the last response arrives, so this shows the most a server delivers, per configuration. Configurations alternate in order each round to cancel drift.',
+  reset() {
+    this.cfgs = [{ n: 'NativePath', c: col.np, rps: 41000, p50: 240, p99: 3400, cpu: 52 }, { n: 'Netty', c: col.ref, rps: 38000, p50: 300, p99: 6200, cpu: 61 }, { n: 'Netty + BoringSSL', c: col.ref2, rps: 43000, p50: 235, p99: 3900, cpu: 55 }];
+    Object.assign(this, { i: 0, t: 0, round: 1, rps: [], p50: [], p99: [], runs: {}, best: 0, err: 0, shed: 0, order: [0, 1, 2], dur: 28, warm: 5 });
+  },
+  tick() {
+    const c = this.cfgs[this.order[this.i]]; this.t++;
+    const ramp = 1 - Math.exp(-this.t / 1.6);
+    const r = c.rps * ramp * jit(1, .025); this.rps.push(r); this.p50.push(jit(c.p50, .08) / (.55 + .45 * ramp));
+    this.p99.push(jit(c.p99, .18) * (R() < .05 ? 2.2 : 1)); this.best = Math.max(this.best, r);
+    if (R() < .002) this.err++;
+    if (this.t >= this.dur) {
+      const m = this.rps.slice(this.warm); this.runs[c.n] = { c, rps: m.reduce((a, b) => a + b, 0) / m.length, p99: this.p99.slice(this.warm).reduce((a, b) => a + b, 0) / m.length, cpu: jit(c.cpu, .03), rounds: this.round, spread: 1.4 + R() * 2 };
+      this.t = 0; this.rps = []; this.p50 = []; this.p99 = []; this.i++;
+      if (this.i >= 3) { this.i = 0; this.round = this.round % 3 + 1; this.order = this.round % 2 ? [0, 1, 2] : [2, 1, 0]; }
+    }
+  },
+  build() {
+    $('#view').innerHTML = `<div class="grid">
+      <section class="card c4"><h3>Requests per second <em id="cfgname"></em></h3><div id="g"></div>
+        <dl class="kv"><div><dt>p50</dt><dd id="k50"></dd></div><div><dt>p99</dt><dd id="k99"></dd></div><div><dt>errors</dt><dd id="kerr"></dd></div><div><dt>shed (503)</dt><dd id="kshed"></dd></div></dl>
+        <p class="note" style="margin-top:8px">The short bar on the dial marks the best second so far in this run.</p></section>
+      <section class="card c8"><h3>Requests per second <em>last 60 s</em></h3><div id="c1"></div><div id="l1"></div>
+        <h3 style="margin-top:12px">Latency <em>last 60 s, log scale</em></h3><div id="c2"></div>${legend([['p50', 'var(--s1)'], ['p99', 'var(--s2)']])}</section>
+      <section class="card c12"><h3>Finished runs <em id="rt"></em></h3><div class="tw"><table id="runs"></table></div></section></div>`;
+  },
+  render() {
+    const c = this.cfgs[this.order[this.i]];
+    head(this, progress(`Round ${this.round} of 3 · ${c.n} · second ${this.t} of ${this.dur} (first ${this.warm} are warm-up)`, this.t / this.dur));
+    $('#cfgname').innerHTML = `<span class="sw" style="background:${c.c}"></span>${c.n}`;
+    const last = this.rps.length ? this.rps[this.rps.length - 1] : 0;
+    gauge($('#g'), { value: last, max: 60000, maxLabel: '60k', peak: this.best, color: c.c, text: fmt(last), label: 'requests per second ' + fmt(last) });
+    $('#k50').textContent = this.p50.length ? ms(this.p50.at(-1)) : '–'; $('#k99').textContent = this.p99.length ? ms(this.p99.at(-1)) : '–';
+    $('#kerr').textContent = this.err; $('#kshed').textContent = this.shed;
+    chart($('#c1'), { series: [{ name: c.n, color: c.c, values: win(this.rps, 60) }], n: 60, ymax: 60000, height: 150, label: 'requests per second, last 60 seconds' });
+    chart($('#c2'), { series: [{ name: 'p99', color: 'var(--s2)', values: win(this.p99, 60), fill: false }, { name: 'p50', color: 'var(--s1)', values: win(this.p50, 60), fill: false }], n: 60, height: 130, yfmt: ms, log: true, ymin: 100, ymax: 100000, label: 'latency, last 60 seconds' });
+    const rs = Object.values(this.runs), mx = Math.max(1, ...rs.map(r => r.rps));
+    $('#rt').textContent = rs.length ? `mean of the measured seconds · spread is between rounds` : '';
+    $('#runs').innerHTML = `<tr><th>Configuration</th><th class="r">req/s</th><th class="r">p99</th><th class="r">CPU µs/req</th><th class="r">Spread</th></tr>` +
+      this.cfgs.map(k => { const r = this.runs[k.n]; return r ? `<tr><td><span class="sw" style="background:${k.c}"></span>${k.n}</td><td class="r num">${fmt(r.rps)}<span class="cellbar" style="width:${(r.rps / mx * 90).toFixed(0)}px;background:${k.c}"></span></td><td class="r num">${ms(r.p99)}</td><td class="r num">${r.cpu.toFixed(0)}</td><td class="r num">±${r.spread.toFixed(1)}%</td></tr>` : `<tr><td><span class="sw" style="background:${k.c}"></span>${k.n}</td><td class="r note" colspan="4">${k === c ? 'running' : 'queued'}</td></tr>`; }).join('');
+    return { title: 'last 12 seconds', head: ['second', 'req/s', 'p50 µs', 'p99 µs'], rows: this.rps.slice(-12).map((v, i, a) => [this.t - a.length + i + 1, fmt(v), fmt(this.p50.at(i - a.length)), fmt(this.p99.at(i - a.length))]) };
+  },
+  chips() { return { server: 78, client: 52, net: 410, idle: 87 }; }
+};
+
+/* 2. Stress ramp, open loop */
+V.ramp = {
+  title: 'Stress ramp', kind: 'open loop',
+  blurb: 'Requests are due on a fixed schedule whether or not the server keeps up, and latency counts from when each request was due. The ramp offers a growing share of the peak rate and reports the knee: the highest rate still served in full with p99 under the limit.',
+  reset() { Object.assign(this, { P: 40000, fr: [.3, .5, .7, .8, .9, 1, 1.1, 1.3], step: 0, t: 0, per: 10, off: [], srv: [], steps: [], shed: 0, err: 0, hold: 0, slo: 10000 }); },
+  p99(f, t) { return 1200 + 350 * Math.exp(7 * (f - .6)) + (f > 1 ? t * (f - 1) * 8000 : 0); },
+  tick() {
+    if (this.step >= this.fr.length) { if (++this.hold > 6) this.reset(); return; }
+    const f = this.fr[this.step], off = this.P * f, srv = Math.min(off, this.P * .985) * jit(1, .01); this.t++;
+    this.off.push(off); this.srv.push(srv); if (f > 1.02) this.shed += Math.max(0, off - srv) | 0;
+    this.lastp99 = this.p99(f, this.t) * jit(1, .06);
+    if (this.t >= this.per) { this.steps.push({ f, off, srv, p99: this.lastp99, ok: srv >= off * .99 && this.lastp99 < this.slo }); this.step++; this.t = 0; }
+  },
+  build() {
+    $('#view').innerHTML = `<div class="grid">
+      <section class="card c4"><h3>Offered load <em id="pct"></em></h3><div id="g"></div>
+        <dl class="kv"><div><dt>served</dt><dd id="ksrv"></dd></div><div><dt>p99 now</dt><dd id="k99"></dd></div><div><dt>shed (503)</dt><dd id="kshed"></dd></div><div><dt>knee</dt><dd id="kknee"></dd></div></dl></section>
+      <section class="card c8"><h3>Offered against served <em>requests per second</em></h3><div id="c1"></div>${legend([['offered', 'var(--s2)'], ['served', 'var(--s1)']])}
+        <h3 style="margin-top:12px">p99 at each step <em>limit 10 ms</em></h3><div id="c2"></div></section>
+      <section class="card c12"><h3>Steps</h3><div class="tw"><table id="stp"></table></div></section></div>`;
+  },
+  render() {
+    const done = this.step >= this.fr.length, f = done ? 1.3 : this.fr[this.step], cur = this.off.at(-1) || 0, srv = this.srv.at(-1) || 0;
+    head(this, progress(done ? 'Ramp finished, restarting for the demo' : `Step ${this.step + 1} of ${this.fr.length} · ${Math.round(f * 100)}% of peak · second ${this.t} of ${this.per}`, (this.step * this.per + this.t) / (this.fr.length * this.per)));
+    $('#pct').textContent = `${Math.round(f * 100)}% of the ${fk(this.P)} peak`;
+    gauge($('#g'), { value: cur, max: this.P * 1.4, maxLabel: fk(this.P * 1.4), peak: this.P, color: f > 1 ? 'var(--s2)' : 'var(--s1)', text: fmt(cur), label: 'offered ' + fmt(cur) });
+    $('#ksrv').textContent = fmt(srv); $('#k99').textContent = this.lastp99 ? ms(this.lastp99) : '–'; $('#kshed').textContent = fmt(this.shed);
+    const knee = [...this.steps].reverse().find(s => s.ok); $('#kknee').textContent = knee ? fk(knee.off) + '/s' : '–';
+    chart($('#c1'), { series: [{ name: 'served', color: 'var(--s1)', values: this.srv }, { name: 'offered', color: 'var(--s2)', values: this.off, fill: false, dash: true }], n: this.fr.length * this.per, ymax: this.P * 1.4, step: true, height: 150, unit: ' s', left: true, xl: ['0 s', '40 s', '80 s'], label: 'offered and served requests per second' });
+    chart($('#c2'), { series: [{ name: 'p99', color: 'var(--s1)', values: this.steps.map(s => s.p99), fill: false }], n: this.fr.length, cats: this.fr.map(x => Math.round(x * 100) + '%'), dots: true, ymax: 20000, hline: { v: this.slo, label: 'limit' }, yfmt: ms, height: 130, label: 'p99 latency at each step' });
+    $('#stp').innerHTML = `<tr><th>Step</th><th class="r">Offered</th><th class="r">Served</th><th class="r">p99</th><th class="pl">Result</th></tr>` + this.fr.map((x, i) => { const s = this.steps[i]; return s ? `<tr><td class="num">${Math.round(x * 100)}%</td><td class="r num">${fmt(s.off)}</td><td class="r num">${fmt(s.srv)}</td><td class="r num">${ms(s.p99)}</td><td class="pl">${s.ok ? chip('good', 'served in full') : chip('warn', s.srv < s.off * .99 ? 'saturated' : 'over the limit')}</td></tr>` : `<tr><td class="num">${Math.round(x * 100)}%</td><td class="note" colspan="4">${i === this.step ? 'running' : 'queued'}</td></tr>`; }).join('');
+    return { title: 'steps', head: ['step', 'offered', 'served', 'p99 µs'], rows: this.steps.map(s => [Math.round(s.f * 100) + '%', fmt(s.off), fmt(s.srv), fmt(s.p99)]) };
+  },
+  chips() { const f = this.step < this.fr.length ? this.fr[this.step] : 1.3; return { server: clamp(30 + 60 * f, 20, 99), client: 48, net: 120 + 330 * f, idle: 86 }; }
+};
+
+/* 3. Soak */
+V.soak = {
+  title: 'Soak', kind: 'endurance',
+  blurb: 'A steady load for hours while the server host is sampled once a minute. The question is whether resident memory, Java heap and native allocation stay flat. A memory scan runs every 15 minutes and shows as a dotted line.',
+  reset() { Object.assign(this, { m: 0, hold: 0, extra: 0, leak: false, total: 120, rss: [], heap: [], nat: [], rps: [], gc: [], scans: [] }); },
+  tick() {
+    if (this.m >= this.total) { if (++this.hold > 8) this.reset(); else return; }
+    this.hold = 0; const m = ++this.m;
+    this.extra += this.leak ? .25 : .01; this.rss.push(412 + 26 * (1 - Math.exp(-m / 8)) + this.extra + (R() - .5) * 5);
+    this.heap.push(80 + ((m % 7) / 7) * 135 + (R() - .5) * 10); this.nat.push(38 + (R() - .5) * 1.2 + m * .004);
+    this.rps.push(jit(40000, .015)); this.gc.push(jit(4.2, .2)); if (m % 15 === 0) this.scans.push(m);
+  },
+  slope() { const n = Math.min(60, this.rss.length); if (n < 20) return null; const y = this.rss.slice(-n); let sx = 0, sy = 0, sxy = 0, sxx = 0; y.forEach((v, i) => { sx += i; sy += v; sxy += i * v; sxx += i * i; }); return (n * sxy - sx * sy) / (n * sxx - sx * sx) * 60; },
+  build() {
+    $('#view').innerHTML = `<div class="grid">
+      <section class="card c4 start"><h3>Memory trend <em>last 60 min</em></h3><div class="big" id="sl"></div><p class="note" id="slnote" style="margin:4px 0 10px"></p><div id="verdict"></div>
+        <dl class="kv"><div><dt>RSS now</dt><dd id="kr"></dd></div><div><dt>Java heap</dt><dd id="kh"></dd></div><div><dt>Native alloc</dt><dd id="kn"></dd></div><div><dt>GC pause p99</dt><dd id="kg"></dd></div></dl>
+        <p style="margin-top:12px"><button class="btn" id="lk" type="button">Simulate a leak</button></p></section>
+      <section class="card c8"><h3>Resident memory <em>MB</em></h3><div id="c1"></div>
+        <h3 style="margin-top:10px">Java heap and native allocation <em>MB</em></h3><div id="c2"></div>${legend([['Java heap', 'var(--s2)'], ['native allocation', 'var(--s1)']])}
+        <h3 style="margin-top:10px">Load held <em>requests per second</em></h3><div id="c3"></div></section></div>`;
+    $('#lk').onclick = () => { this.leak = true; $('#lk').textContent = 'A leak of 15 MB per hour is on'; };
+  },
+  render() {
+    head(this, progress(`Minute ${this.m} of ${this.total} · memory scans at ${this.scans.length ? this.scans.map(s => s + ' min').join(', ') : 'none yet'}`, this.m / this.total));
+    const s = this.slope(), lim = 8, vm = this.scans.map(a => ({ k: a - 1 }));
+    $('#sl').innerHTML = s == null ? '–' : `${s >= 0 ? '+' : '−'}${Math.abs(s).toFixed(1)}<small> MB/hour</small>`;
+    $('#slnote').textContent = s == null ? 'Needs 20 minutes of samples.' : `Least-squares slope of resident memory. Limit ${lim} MB/hour.`;
+    $('#verdict').innerHTML = s == null ? chip('idle', 'collecting samples') : s < lim ? chip('good', 'no upward trend') : chip('crit', 'memory is growing');
+    const L = a => (a.length ? a.at(-1) : 0);
+    $('#kr').innerHTML = mb(L(this.rss)) + '<small> MB</small>'; $('#kh').innerHTML = mb(L(this.heap)) + '<small> MB</small>'; $('#kn').innerHTML = mb(L(this.nat)) + '<small> MB</small>'; $('#kg').innerHTML = L(this.gc).toFixed(1) + '<small> ms</small>';
+    const o = { n: this.total, unit: ' min', vmarks: vm, left: true, xl: ['0', '60 min', '120 min'] };
+    const ry = Math.max(460, Math.ceil((Math.max(...this.rss, 0) + 10) / 20) * 20);
+    chart($('#c1'), { ...o, series: [{ name: 'RSS', color: 'var(--s1)', values: this.rss }], ymin: 380, ymax: ry, yfmt: v => Math.round(v), height: 140, label: 'resident memory in MB' });
+    chart($('#c2'), { ...o, series: [{ name: 'Java heap', color: 'var(--s2)', values: this.heap, fill: false }, { name: 'native allocation', color: 'var(--s1)', values: this.nat, fill: false }], ymax: 250, yfmt: v => Math.round(v), height: 130, label: 'Java heap and native allocation in MB' });
+    chart($('#c3'), { ...o, series: [{ name: 'req/s', color: 'var(--s1)', values: this.rps }], ymax: 60000, height: 90, label: 'requests per second held' });
+    return { title: 'last 12 minutes', head: ['minute', 'RSS MB', 'heap MB', 'native MB', 'req/s'], rows: this.rss.slice(-12).map((v, i, a) => { const k = this.m - a.length + i + 1, j = i - a.length; return [k, mb(v), mb(this.heap.at(j)), mb(this.nat.at(j)), fmt(this.rps.at(j))]; }) };
+  },
+  chips() { return { server: 71, client: 44, net: 360, idle: 88 }; }
+};
+
+/* 4. Memory scan under load */
+V.scan = {
+  title: 'Memory scan under load', kind: 'security proof',
+  blurb: 'The process is scanned for planted secret values while the server is busy, and again after error, timeout and cancel paths. Control scans must find their value; every protected scan must find none. A control that finds nothing means the scanner is blind, so the run fails.',
+  reset() { Object.assign(this, { t: 0, rps: [], marks: [], list: [], cur: null, idx: 0, leak: false, scenarios: [
+    { n: 'control: value read as a String', exp: 'min1', found: 36 }, { n: 'bearer token header', exp: 0 }, { n: 'password in JSON body', exp: 0 },
+    { n: 'secret column read back', exp: 0 }, { n: 'after a request error', exp: 0 }, { n: 'after a timeout', exp: 0 }, { n: 'after a cancel', exp: 0 }] }); },
+  tick() {
+    this.t++; this.rps.push(jit(34000, .03));
+    if (this.cur) { this.cur.left--; if (this.cur.left <= 0) { const s = this.cur.s; let found = s.exp === 'min1' ? Math.round(jit(s.found, .3)) : 0; if (this.leak && s.exp === 0) { found = 2; this.leak = false; }
+      const ok = s.exp === 'min1' ? found >= 1 : found === 0; this.list.unshift({ at: this.t, n: s.n, exp: s.exp, found, ok, ms: Math.round(jit(1400, .3)) }); if (this.list.length > 9) this.list.pop(); this.cur = null; } }
+    else if (this.t % 9 === 0) { const s = this.scenarios[this.idx++ % this.scenarios.length]; this.cur = { s, left: 3 }; this.marks.push(this.t); }
+  },
+  build() {
+    $('#view').innerHTML = `<div class="grid">
+      <section class="card c12"><div class="banner" id="bn"></div><h3>Load while scanning <em>requests per second, last 90 s</em></h3><div id="c1"></div>
+        <p class="note">Dotted lines mark when a scan started. Throughput should not drop while the process is scanned.</p>
+        <p style="margin-top:8px"><button class="btn" id="leak" type="button">Simulate a leak in the next protected scan</button></p></section>
+      <section class="card c12"><h3>Scans <em id="sc"></em></h3><div class="tw"><table id="tb"></table></div></section></div>`;
+    $('#leak').onclick = () => { this.leak = true; $('#leak').textContent = 'A leak will show in the next protected scan'; };
+  },
+  render() {
+    const fails = this.list.filter(x => !x.ok).length; head(this, progress(this.cur ? `Scanning: ${this.cur.s.n}` : 'Waiting for the next scan', this.cur ? 1 - this.cur.left / 3 : 0));
+    const bn = $('#bn'); bn.className = 'banner' + (fails ? ' on' : ''); bn.innerHTML = fails ? `${chip('crit', 'run failed')} <b>${fails} scan${fails > 1 ? 's' : ''} found a secret that should not be in memory.</b>` : '';
+    chart($('#c1'), { series: [{ name: 'req/s', color: 'var(--s1)', values: win(this.rps, 90) }], n: 90, ymax: 60000, height: 140, vmarks: this.marks.map(a => ({ k: 89 - (this.t - a) })), label: 'requests per second while scanning' });
+    $('#sc').textContent = `${this.list.length} finished`;
+    $('#tb').innerHTML = `<tr><th>Second</th><th>Scan</th><th class="r">Expected</th><th class="r">Found</th><th class="r">Time</th><th class="pl">Result</th></tr>` +
+      (this.cur ? `<tr><td class="num">${this.t}</td><td>${this.cur.s.n}</td><td class="r num">${this.cur.s.exp === 'min1' ? '≥ 1' : 0}</td><td class="r note">–</td><td class="r note">–</td><td class="pl">${chip('run', 'scanning')}</td></tr>` : '') +
+      this.list.map(x => `<tr><td class="num">${x.at}</td><td>${x.n}</td><td class="r num">${x.exp === 'min1' ? '≥ 1' : 0}</td><td class="r num">${x.found}</td><td class="r num">${(x.ms / 1000).toFixed(1)} s</td><td class="pl">${x.ok ? chip('good', 'as expected') : chip('crit', 'unexpected')}</td></tr>`).join('');
+    return { title: 'scans', head: ['second', 'scan', 'expected', 'found', 'ok'], rows: this.list.map(x => [x.at, x.n, x.exp === 'min1' ? '>=1' : 0, x.found, x.ok]) };
+  },
+  chips() { return { server: 64, client: 40, net: 280, idle: 85 }; }
+};
+
+/* 5. Correctness under load */
+V.correct = {
+  title: 'Correctness under load', kind: 'verification',
+  blurb: 'Speed counts for nothing if the answers are wrong. The load generator checks every response against what that route must return: the status, the length and a hash of the body. One mismatch is a failure, and the run stops on the first one.',
+  reset() { Object.assign(this, { t: 0, vps: [], bad: 0, inject: false, routes: [
+    { r: 'GET /hello', e: '200 · 5 B', n: 0, b: 0 }, { r: 'GET /payload?size=65536', e: '200 · 64 KiB · sha256', n: 0, b: 0 }, { r: 'GET /payload?size=524288 (TLS)', e: '200 · 512 KiB · sha256', n: 0, b: 0 },
+    { r: 'POST /echo 4 KiB', e: '200 · same bytes back', n: 0, b: 0 }, { r: 'POST /json order', e: '200 · 412 B · sha256', n: 0, b: 0 }, { r: 'GET /nope', e: '404', n: 0, b: 0 }], sample: '' }); },
+  tick() {
+    this.t++; let total = 0;
+    this.routes.forEach((r, i) => { const k = Math.round(jit([9000, 4200, 900, 3600, 5200, 400][i], .08)); r.n += k; total += k; });
+    if (this.inject) { const r = this.routes[4]; r.b++; this.bad++; this.inject = false; this.sample = `POST /json order → 200, 409 B, sha256 3a91…c0 (expected 412 B, 9f2c…a1)`; }
+    this.vps.push(total);
+  },
+  build() {
+    $('#view').innerHTML = `<div class="grid">
+      <section class="card c4"><h3>Verified responses</h3><div class="big" id="tot"></div><p class="note" style="margin:4px 0 10px" id="rate"></p><div id="ver"></div>
+        <p style="margin-top:12px"><button class="btn" id="inj" type="button">Inject a wrong response (demo)</button></p></section>
+      <section class="card c8"><h3>Verified per second <em>last 60 s</em></h3><div id="c1"></div>
+        <p class="note" id="smp" style="margin-top:8px"></p></section>
+      <section class="card c12"><h3>Routes <em>share of all checks</em></h3><div class="rows" id="rt"></div></section></div>`;
+    $('#inj').onclick = () => { this.inject = true; };
+  },
+  render() {
+    const tot = this.routes.reduce((a, r) => a + r.n, 0); head(this, progress(`Second ${this.t} of 600 · the run stops on the first mismatch`, this.t / 600));
+    $('#tot').innerHTML = fmt(tot); $('#rate').textContent = `${fmt(this.vps.at(-1) || 0)} checks per second`;
+    $('#ver').innerHTML = this.bad ? chip('crit', `${this.bad} mismatch, run failed`) : chip('good', 'every response matched');
+    chart($('#c1'), { series: [{ name: 'checks/s', color: 'var(--s1)', values: win(this.vps, 60) }], n: 60, ymax: 30000, height: 140, label: 'verified responses per second' });
+    $('#smp').innerHTML = this.sample ? `<span style="color:var(--fg)">${chip('crit', 'first mismatch')}</span> <code>${this.sample}</code>` : 'Last check: <code>GET /payload?size=65536 → 200, 65536 B, sha256 b7e1…4d = expected</code>';
+    $('#rt').innerHTML = this.routes.map(r => `<div class="route"><div><b style="font-weight:500">${r.r}</b><br><code>${r.e}</code></div><div class="bar"><i style="width:${(r.n / tot * 100).toFixed(1)}%"></i></div><div class="num" style="text-align:right">${fmt(r.n)}</div><div>${r.b ? chip('crit', r.b + ' wrong') : chip('good', '0 wrong')}</div></div>`).join('');
+    return { title: 'routes', head: ['route', 'expected', 'verified', 'wrong'], rows: this.routes.map(r => [r.r, r.e, fmt(r.n), r.b]) };
+  },
+  chips() { return { server: 74, client: 61, net: 390, idle: 86 }; }
+};
+
+/* 6. Database sustained load */
+V.db = {
+  title: 'Database under sustained load', kind: 'sql',
+  blurb: 'The same SQL through the same connection pool, first with the pgjdbc driver and then with NativePath, for each scenario. Throughput, latency and pool use are sampled every second. The credential and a secret column are scanned while the pool is busy.',
+  reset() {
+    Object.assign(this, { sc: [{ n: 'One row by primary key', np: 2900, pg: 3300, p: 300 }, { n: 'One insert', np: 2700, pg: 2900, p: 340 }, { n: '10 000 rows, 4 columns', np: 60, pg: 185, p: 5400 }, { n: 'Batch of 1 000 inserts', np: 3, pg: 130, p: 7400 }],
+      si: 0, di: 0, t: 0, dur: 16, ops: [], lat: [], pool: 12, done: {}, rows: 0 });
+  },
+  tick() {
+    const s = this.sc[this.si], np = this.di === 0, tgt = np ? s.np : s.pg; this.t++;
+    const ramp = 1 - Math.exp(-this.t / 1.4); this.ops.push(jit(tgt * ramp, .03)); this.lat.push(jit(1e6 / Math.max(tgt, 1) * (np ? 1 : .9), .1) * (R() < .05 ? 2 : 1));
+    this.pool = clamp(Math.round(this.pool + (R() - .5) * 3), 8, 16); this.rows = tgt * (s.n.startsWith('10 000') ? 10000 : 1);
+    if (this.t >= this.dur) { const m = this.ops.slice(4); this.done[s.n + this.di] = m.reduce((a, b) => a + b, 0) / m.length; this.t = 0; this.ops = []; this.lat = []; if (++this.di > 1) { this.di = 0; this.si = (this.si + 1) % this.sc.length; if (this.si === 0) this.done = {}; } }
+  },
+  build() {
+    $('#view').innerHTML = `<div class="grid">
+      <section class="card c4"><h3>Operations per second <em id="drv"></em></h3><div id="g"></div>
+        <dl class="kv"><div><dt>p50</dt><dd id="k50"></dd></div><div><dt>rows/s</dt><dd id="krow"></dd></div></dl>
+        <h3 style="margin-top:12px">Connections in use <em id="pl"></em></h3><div class="segs" id="segs"></div></section>
+      <section class="card c8"><h3>Operations per second <em>last 60 s</em></h3><div id="c1"></div><h3 style="margin-top:12px">Latency <em>last 60 s</em></h3><div id="c2"></div></section>
+      <section class="card c7"><h3>Scenarios <em>operations per second, mean of the measured seconds</em></h3><div class="tw"><table id="tb"></table></div>${legend([['pgjdbc', 'var(--s2)'], ['NativePath', 'var(--s1)']])}</section>
+      <section class="card c5"><h3>Scans while the pool is busy</h3><div class="rows" style="font-size:13px">
+        <div style="display:flex;justify-content:space-between;gap:8px"><span>Password, after sign-in and after close</span>${chip('good', 'found 0')}</div>
+        <div style="display:flex;justify-content:space-between;gap:8px"><span>Secret column, over TLS</span>${chip('good', 'found 0')}</div>
+        <div style="display:flex;justify-content:space-between;gap:8px"><span>Control: card read as a String</span>${chip('good', 'found 12, as required')}</div>
+        <div style="display:flex;justify-content:space-between;gap:8px"><span>After a cancelled statement</span>${chip('idle', 'queued')}</div></div></section></div>`;
+  },
+  render() {
+    const s = this.sc[this.si], np = this.di === 0, c = np ? col.np : col.ref;
+    head(this, progress(`Scenario ${this.si + 1} of ${this.sc.length} · ${s.n} · ${np ? 'NativePath' : 'pgjdbc'} · second ${this.t} of ${this.dur}`, (this.si * 2 + this.di + this.t / this.dur) / (this.sc.length * 2)));
+    $('#drv').innerHTML = `<span class="sw" style="background:${c}"></span>${np ? 'NativePath' : 'pgjdbc'}`;
+    const v = this.ops.at(-1) || 0, mx = Math.max(s.np, s.pg) * 1.3;
+    gauge($('#g'), { value: v, max: mx, maxLabel: fk(mx), color: c, text: fmt(v), label: 'operations per second ' + fmt(v) });
+    $('#k50').textContent = this.lat.length ? ms(this.lat.at(-1)) : '–'; $('#krow').textContent = fk(this.rows);
+    $('#pl').textContent = `${this.pool} of 16`; $('#segs').innerHTML = Array.from({ length: 16 }, (_, i) => `<i class="${i < this.pool ? 'on' : ''}"></i>`).join('');
+    chart($('#c1'), { series: [{ name: 'ops/s', color: c, values: win(this.ops, 60) }], n: 60, ymax: niceMax(mx), height: 130, label: 'operations per second' });
+    chart($('#c2'), { series: [{ name: 'latency', color: c, values: win(this.lat, 60), fill: false }], n: 60, height: 110, yfmt: ms, label: 'latency' });
+    $('#tb').innerHTML = `<tr><th>Scenario</th><th class="r">pgjdbc</th><th class="r">NativePath</th><th class="r">Ratio</th></tr>` + this.sc.map((x, i) => { const a = this.done[x.n + 1], b = this.done[x.n + 0], run = i === this.si; const cell = (k, c2) => k != null ? `<td class="r num">${fmt(k)}</td>` : `<td class="r note">${run ? 'running' : 'queued'}</td>`; return `<tr><td>${x.n}</td>${cell(a)}${cell(b)}<td class="r num">${a != null && b != null ? (b / a).toFixed(2) + '×' : '–'}</td></tr>`; }).join('');
+    return { title: 'last 12 seconds', head: ['second', 'ops/s', 'latency µs'], rows: this.ops.slice(-12).map((v2, i, a) => [this.t - a.length + i + 1, fmt(v2), fmt(this.lat.at(i - a.length))]) };
+  },
+  chips() { return { server: 58, client: 46, net: 95, idle: 89 }; }
+};
+
+/* ====================================================================================================
+   Real data: the np-bench server's events and results, in the same views as the demo.
+   ==================================================================================================== */
+const META = {
+  preflight: { t: 'Preflight', k: 'check', s: 'tools, library, hosts' }, memory: { t: 'Memory proofs', k: 'security proof', s: 'one-shot scans' },
+  throughput: { t: 'Throughput and latency', k: 'closed loop', s: 'most each server delivers' }, ramp: { t: 'Stress ramp', k: 'open loop', s: 'finds the knee' },
+  scan: { t: 'Scan under load', k: 'security proof', s: 'plus error paths' }, correct: { t: 'Correctness under load', k: 'verification', s: 'every response checked' },
+  soak: { t: 'Soak', k: 'endurance', s: 'memory trend over time' }, db: { t: 'Database under load', k: 'sql', s: 'pgjdbc against NativePath' }
+};
+const BLURB = {
+  preflight: 'Tools, the native library, the load generator, ssh and the platform of each machine.',
+  memory: 'One-shot whole-process scans for planted secret values after real requests, client and server.',
+  throughput: 'Every connection sends its next request as soon as the last response arrives, so this shows the most a server delivers, per configuration. Configurations alternate in order each round to cancel drift.',
+  ramp: 'Requests are due on a fixed schedule whether or not the server keeps up, and latency counts from when each request was due. The ramp offers a growing share of the peak rate and reports the knee: the highest rate still served in full with p99 under the limit.',
+  scan: 'Planted secrets are sent while the server is busy, in ordinary requests and through failure paths, then the server scans its own process for them. The control must be found: a control that finds nothing means the scanner is blind.',
+  correct: 'Speed counts for nothing if the answers are wrong. The load generator checks every response against what that route must return: the status, the length and a hash of the body.',
+  soak: 'A steady load for a long time while the server host is sampled. The question is whether resident memory, Java heap and native memory stay flat. Memory scans run at intervals and show as dotted lines.',
+  db: 'The same SQL through the same pool, pgjdbc first and then NativePath, per scenario. Throughput, latency and pool use are sampled every second; the one-shot memory scans of the driver run afterwards.'
+};
+const EXP_ORDER = ['preflight', 'memory', 'throughput', 'ramp', 'scan', 'correct', 'soak', 'db'];
+const API = { token: ((document.querySelector('meta[name="np-token"]') || {}).content) || '' };
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-NP-Token': API.token }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt); let j = {}; try { j = await r.json(); } catch (e) { /* not JSON */ }
+  if (!r.ok) throw new Error(j.error || r.statusText); return j;
+}
+const S = { served: false, canStart: false, tab: 'demo', runs: [], runId: null, run: null, report: null, from: 0, done: false, announced: false, ticks: {}, samples: {}, cur: {}, expState: {},
+  sel: null, more: false, schema: null, lastHosts: {}, newMode: 'check', newExps: null, newSet: {}, newHosts: { server: '', client: '', server_ip: '' }, err: '', note: '', hoverUntil: 0, polls: 0, pick: {}, busy: false, fromFile: false, started: 0 };
+
+const verdictChip = v => v === 'pass' ? chip('good', 'passed') : v === 'fail' ? chip('crit', 'failed') : v === 'info' ? chip('warn', 'not judged') : chip('idle', 'no data');
+const cfgColor = n => /openssl/.test(n) ? 'var(--s3)' : /netty|pgjdbc/.test(n) ? 'var(--s2)' : /nativepath|^np_|^engine/.test(n) ? 'var(--s1)' : 'var(--fg-3)';
+const when = t => t ? new Date(t).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' }) : '–';
+const dur = ms => { const s = Math.round(ms / 1000); return s >= 3600 ? Math.floor(s / 3600) + ' h ' + Math.floor(s % 3600 / 60) + ' min' : s >= 60 ? Math.floor(s / 60) + ' min ' + (s % 60) + ' s' : s + ' s'; };
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const num = (v, d = 0) => v == null ? '–' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+const lastOf = a => a && a.length ? a[a.length - 1] : null;
+function setting(exp, key, dflt) { const r = (S.report && S.report.run) || S.run; const v = r && r.settings && r.settings[exp] && r.settings[exp][key]; return v == null ? dflt : v; }
+
+function resetRun() { Object.assign(S, { run: null, report: null, from: 0, done: false, announced: false, ticks: {}, samples: {}, cur: {}, expState: {}, sel: null, err: '', note: '', polls: 0, pick: {}, fromFile: false }); }
+function ingest(ev) {
+  const e = ev.exp;
+  if (ev.type === 'run') { S.run = ev; S.started = ev.started || ev.t; }
+  else if (ev.type === 'exp') { S.expState[e] = { state: ev.state === 'start' ? 'running' : ev.rc === 0 ? 'done' : 'failed', rc: ev.rc }; if (ev.state === 'start') S.sel = null; }
+  else if (ev.type === 'tick') { const a = (S.ticks[e] = S.ticks[e] || []); a.push(ev); if (a.length > 1500) a.shift(); S.cur[e] = ev; }
+  else if (ev.type === 'sample') { const a = (S.samples[e] = S.samples[e] || []); a.push(ev); if (a.length > 3000) a.shift(); }
+  else if (ev.type === 'run_end') S.done = true;
+}
+function runningExp() { return Object.keys(S.expState).find(k => S.expState[k].state === 'running') || null; }
+function expList() { const r = (S.report && S.report.run) || S.run; return (r && r.experiments) || []; }
+function expReport(e) { return S.report && S.report.experiments && S.report.experiments[e] || null; }
+function selectedExp() { return S.sel || runningExp() || (S.tab === 'live' ? lastOf(Object.keys(S.expState)) : null) || expList().find(e => e !== 'preflight') || expList()[0] || null; }
+
+async function loadRuns() { try { S.runs = (await api('api/runs')).runs; } catch (e) { S.err = e.message; } }
+async function openRun(id, tab) {
+  resetRun(); S.runId = id; S.tab = tab;
+  try {
+    let more = true;
+    while (more) { const j = await api(`api/runs/${id}/events?from=${S.from}`); j.events.forEach(ingest); S.from = j.next; more = j.events.length > 0 && j.next < j.size; if (j.done) S.done = true; }
+    S.report = await api(`api/runs/${id}/results`).catch(() => null);
+  } catch (e) { S.err = e.message; }
+  S.announced = true; drawAll();
+}
+async function poll() {
+  if (!S.served || S.tab === 'demo' || !S.runId || (S.done && S.announced) || document.hidden) return;
+  try {
+    const j = await api(`api/runs/${S.runId}/events?from=${S.from}`); j.events.forEach(ingest); S.from = j.next; if (j.done) S.done = true;
+    if ((++S.polls % 3 === 0 || S.done || j.events.some(e => e.type === 'exp')) && (j.events.length || S.done)) S.report = await api(`api/runs/${S.runId}/results`).catch(() => S.report);
+    S.err = '';
+  } catch (e) { S.err = e.message; }
+  if (S.done && !S.announced) {
+    S.announced = true; S.report = await api(`api/runs/${S.runId}/results`).catch(() => S.report);
+    const v = Object.values((S.report && S.report.experiments) || {}).map(x => x.verdict), f = v.filter(x => x === 'fail').length;
+    S.note = f ? `${chip('crit', 'run finished')} ${f} of ${v.length} experiments failed.` : `${chip('good', 'run finished')} ${v.length} experiments, none failed.`; S.sel = null; S.finishedView = true; loadRuns();
+  }
+  if (Date.now() > S.hoverUntil) drawAll();
+}
+
+/* ---------- small building blocks ---------- */
+const card = (cls, title, em, inner) => `<section class="card ${cls}"><h3><span>${title}</span><em>${em || ''}</em></h3>${inner}</section>`;
+const kv = items => `<dl class="kv">${items.map(i => `<div><dt>${i[0]}</dt><dd>${i[1]}</dd></div>`).join('')}</dl>`;
+function table(cols, rows, empty, rowAttr) {
+  if (!rows.length) return `<p class="note">${empty || 'Nothing yet.'}</p>`;
+  return `<div class="tw"><table><tr>${cols.map(c => `<th class="${c.r ? 'r' : ''}">${c.h}</th>`).join('')}</tr>${rows.map(r => `<tr${rowAttr ? rowAttr(r) : ''}>${cols.map(c => `<td class="${c.r ? 'r num' : ''}">${c.f(r)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+}
+function sparks(map) {
+  const keys = Object.keys(map).filter(k => map[k].vals.filter(v => v != null).length > 1);
+  if (!keys.length) return '<p class="note">No other metrics were collected for this experiment.</p>';
+  return `<div class="sparks">${keys.map(k => `<div class="spark"><div class="l">${esc(k)}</div><div class="v">${map[k].fmt ? map[k].fmt(lastOf(map[k].vals)) : num(lastOf(map[k].vals), 1)}</div><div class="sp" data-k="${esc(k)}"></div></div>`).join('')}</div>`;
+}
+function drawSparks(map) {
+  document.querySelectorAll('.sp').forEach(el => { const m = map[el.dataset.k]; if (m) chart(el, { series: [{ name: el.dataset.k, color: 'var(--s1)', values: m.vals.slice(-120), fill: true }], n: Math.min(120, m.vals.length), height: 56, ml: 4, mt: 4, tiny: true, label: el.dataset.k }); });
+}
+const moreSwitch = () => `<button class="btn" id="more" type="button" aria-pressed="${S.more}">${S.more ? 'Fewer metrics' : 'More metrics'}</button>`;
+const tickMap = (ticks, skip) => { const m = {}; ticks.forEach(t => Object.keys(t).forEach(k => { if (typeof t[k] === 'number' && !skip.includes(k) && k !== 't') (m[k] = m[k] || { vals: [] }).vals.push(t[k]); })); return m; };
+const sampleMap = samples => { const m = {}; samples.forEach(t => Object.keys(t).forEach(k => { if (typeof t[k] === 'number' && !['t', 'pid'].includes(k)) (m[k] = m[k] || { vals: [] }).vals.push(t[k]); })); return m; };
+const lab = { rss_mb: 'resident memory MB', heap_used_mb: 'Java heap used MB', heap_committed_mb: 'Java heap committed MB', nonheap_mb: 'non-heap MB', other_mb: 'other (native estimate) MB', cpu_pct: 'process CPU %', machine_cpu_pct: 'machine CPU %', threads: 'OS threads', jvm_threads: 'JVM threads', fds: 'open files', gc_count: 'collections', gc_ms: 'GC time ms',
+  rps: 'requests/s', p50_us: 'p50 µs', p99_us: 'p99 µs', p999_us: 'p99.9 µs', max_us: 'max µs', errors: 'errors', shed: 'shed (503)', mb_s: 'MB/s', verified: 'verified', mismatches: 'mismatches', conns: 'connections', target_rps: 'offered req/s', ops_s: 'operations/s', rows_s: 'rows/s', pool_in_use: 'connections in use', pool_waiting: 'threads waiting', sec: 'second' };
+const relabel = m => { const o = {}; Object.keys(m).forEach(k => { o[lab[k] || k] = m[k]; }); return o; };
+
+/* ---------- the views ---------- */
+const Rv = {};
+Rv.preflight = c => card('c12', 'Machines', '', `<pre style="white-space:pre-wrap;font:12px var(--font-mono);margin:0;color:var(--fg-2)">${esc(((S.report && S.report.machine) || '').replace(/ \| /g, '\n') || 'No machine description recorded.')}</pre>`);
+
+Rv.throughput = c => {
+  const rep = c.rep || {}, rows = rep.table || [], t = c.ticks, last = c.cur;
+  const same = last ? t.filter(x => x.config === last.config && x.scenario === last.scenario && x.round === last.round) : [];
+  const best = same.reduce((a, x) => Math.max(a, x.rps), 0);
+  const keyOf = r => r.config + '|' + r.scenario, bestRow = rows.reduce((a, r) => !a || r.rps_mean > a.rps_mean ? r : a, null);
+  const pickKey = !c.live && S.pick.tp ? S.pick.tp : (c.live && last ? last.config + '|' + last.scenario : (bestRow ? keyOf(bestRow) : ''));
+  const ser = c.live ? same : t.filter(x => x.config + '|' + x.scenario === pickKey && (x.round || 1) === 1 && x.phase !== 'drain');
+  const rs = !c.live && !ser.length && rep.series && rep.series[pickKey];
+  let left;
+  if (c.live && last) {
+    left = card('c4', 'Requests per second', `<span class="sw" style="background:${cfgColor(last.config)}"></span>${esc(last.config)}`, '<div id="g"></div>' + kv([['p50', ms(last.p50_us)], ['p99', ms(last.p99_us)], ['errors', num(last.errors)], ['shed (503)', num(last.shed)]]) +
+      (S.more ? kv([['p99.9', ms(last.p999_us)], ['slowest', ms(last.max_us)], ['MB/s', num(last.mb_s, 2)], ['connections', num(last.conns)]]) : '') + '<p class="note" style="margin-top:8px">The short bar on the dial marks the best second so far in this run.</p>');
+  } else {
+    const b = rows.find(r => keyOf(r) === pickKey) || bestRow;
+    left = card('c4', 'Result', verdictChip(rep.verdict), b ? `<div class="big">${num(b.rps_mean)}<small> req/s</small></div><p class="note" style="margin:4px 0 8px"><span class="sw" style="background:${cfgColor(b.config)}"></span>${esc(b.config)} · ${esc(b.scenario)}${b === bestRow ? `, the best of ${rows.length} measurements` : ''}</p>` + kv([['p99', ms(b.p99_us)], ['CPU µs/req', num(b.cpu_us_req, 1)], ['spread', num(b.spread_pct, 1) + '%'], ['errors', num(b.errors)]]) +
+      (S.more ? kv([['p50', ms(b.p50_us)], ['p99.9', ms(b.p999_us)], ['heap B/req', num(b.heap_b_req)], ['MB/s', num(b.mb_s, 2)]]) : '') : '<p class="note">No measurements.</p>');
+  }
+  const right = card('c8', 'Requests per second', c.live ? 'this run, last 60 s' : esc(pickKey.replace('|', ' · ')), '<div id="c1"></div>' + `<h3 style="margin-top:12px"><span>Latency</span><em>log scale</em></h3><div id="c2"></div>` + legend([['p50', 'var(--s1)'], ['p99', 'var(--s2)']]));
+  const cols = [{ h: 'Configuration', f: r => `<span class="sw" style="background:${cfgColor(r.config)}"></span>${esc(r.config)}` }, { h: 'Scenario', f: r => esc(r.scenario) }, { h: 'req/s', r: 1, f: r => num(r.rps_mean) }, { h: 'p99', r: 1, f: r => ms(r.p99_us) },
+    { h: 'CPU µs/req', r: 1, f: r => num(r.cpu_us_req, 1) }, { h: 'Spread', r: 1, f: r => num(r.spread_pct, 0) + '%' }, { h: 'Errors', r: 1, f: r => num(r.errors) }];
+  if (S.more) cols.push({ h: 'Rounds', r: 1, f: r => r.rounds }, { h: 'p50', r: 1, f: r => ms(r.p50_us) }, { h: 'p99.9', r: 1, f: r => ms(r.p999_us) }, { h: 'Heap B/req', r: 1, f: r => num(r.heap_b_req) }, { h: 'Shed', r: 1, f: r => num(r.shed) }, { h: 'MB/s', r: 1, f: r => num(r.mb_s, 2) }, { h: 'min–max req/s', r: 1, f: r => num(r.rps_min) + '–' + num(r.rps_max) });
+  const tbl = card('c12', 'Finished measurements', (rep.headline ? esc(rep.headline) : '') + (!c.live && rows.length ? ' · click a row to chart it' : ''), table(cols, rows, c.live ? 'Measurements appear here as each one finishes.' : 'No measurements.', c.live ? null : r => ` class="pick${keyOf(r) === pickKey ? ' on' : ''}" data-k="${esc(keyOf(r))}"`));
+  const moreC = S.more && c.live ? card('c12', 'Every metric the load generator reports', 'this run', sparks(relabel(tickMap(same, ['sec', 'target_rps'])))) : '';
+  return { html: `<div class="grid">${left}${right}${tbl}${moreC}</div>`, after() {
+    if (c.live && last) { const mx = niceMax(Math.max(best * 1.3, 1000)); gauge($('#g'), { value: last.rps, max: mx, maxLabel: fk(mx), peak: best, color: cfgColor(last.config), text: fmt(last.rps), label: 'requests per second' }); }
+    const col = c.live && last ? cfgColor(last.config) : cfgColor(pickKey);
+    const R1 = ser.length ? ser.map(x => x.rps) : rs ? rs.rps : [], P99 = ser.length ? ser.map(x => x.p99_us) : rs ? rs.p99_us : [], P50 = ser.length ? ser.map(x => x.p50_us) : [];
+    const N = c.live ? 60 : Math.max(R1.length, 2), W = a => c.live ? win(a, 60) : a;
+    chart($('#c1'), { series: [{ name: 'req/s', color: col, values: W(R1) }], n: N, height: 150, unit: 's', label: 'requests per second' });
+    chart($('#c2'), { series: [{ name: 'p99', color: 'var(--s2)', values: W(P99), fill: false }].concat(P50.length ? [{ name: 'p50', color: 'var(--s1)', values: W(P50), fill: false }] : []), n: N, height: 130, yfmt: ms, log: true, ymin: 10, ymax: 1000000, unit: 's', label: 'latency' });
+    document.querySelectorAll('tr.pick').forEach(tr => tr.onclick = () => { S.pick.tp = tr.dataset.k; drawAll(); });
+    if (S.more && c.live) drawSparks(relabel(tickMap(same, ['sec', 'target_rps'])));
+  } };
+};
+
+Rv.ramp = c => {
+  const rep = c.rep || {}, cfgs = rep.configs || {}, names = Object.keys(cfgs), last = c.cur;
+  const pick = S.pick.ramp && cfgs[S.pick.ramp] ? S.pick.ramp : (c.live && last && cfgs[last.config] ? last.config : names[0] || (last && last.config));
+  const cf = cfgs[pick] || { steps: [], peak_rps: null, knee: null };
+  const mine = c.ticks.filter(x => x.config === pick);
+  const live = c.live && last && last.config === pick;
+  const offered = live ? (last.target_rps || last.rps) : 0, peak = cf.peak_rps || (mine.length ? Math.max(...mine.map(x => x.rps)) : 0);
+  const tools = names.length > 1 ? `<div class="seg" id="cfgsel">${names.map(n => `<button class="btn" data-c="${esc(n)}" aria-pressed="${n === pick}">${esc(n)}</button>`).join('')}</div>` : '';
+  const left = card('c4', live ? 'Offered load' : 'Knee', `<span class="sw" style="background:${cfgColor(pick || '')}"></span>${esc(pick || '')}`,
+    (live ? '<div id="g"></div>' + kv([['served now', num(last.rps)], ['p99 now', ms(last.p99_us)], ['shed (503)', num(last.shed)], ['knee', cf.knee ? fk(cf.knee) + '/s' : '–']]) :
+      `<div class="big">${cf.knee ? num(cf.knee) : '–'}<small> req/s</small></div><p class="note" style="margin:4px 0 8px">${cf.knee ? 'The highest step served in full with p99 under the limit.' : 'Below the lowest step.'}</p>` + kv([['closed-loop peak', num(cf.peak_rps)], ['steps', cf.steps.length]])) +
+    (S.more && live ? kv([['p99.9', ms(last.p999_us)], ['slowest', ms(last.max_us)], ['errors', num(last.errors)], ['connections', num(last.conns)]]) : ''));
+  const right = card('c8', 'Offered against served', 'requests per second', '<div id="c1"></div>' + legend([['served', 'var(--s1)'], ['offered', 'var(--s2)']]) + `<h3 style="margin-top:12px"><span>p99 at each step</span><em>limit ${ms(rep.slo_us || 10000)}</em></h3><div id="c2"></div>`);
+  const cols = [{ h: 'Step', f: s => Math.round(s.fraction * 100) + '%' }, { h: 'Offered', r: 1, f: s => num(s.offered) }, { h: 'Served', r: 1, f: s => num(s.served) }, { h: 'Served %', r: 1, f: s => num(s.served_pct, 0) + '%' }, { h: 'p99', r: 1, f: s => ms(s.p99_us) },
+    { h: 'Shed', r: 1, f: s => num(s.shed) }, { h: 'Errors', r: 1, f: s => num(s.errors) }, { h: 'Result', f: s => s.ok ? chip('good', 'served in full') : chip('warn', s.served_pct < 95 ? 'saturated' : 'over the limit') }];
+  if (S.more) cols.splice(5, 0, { h: 'p50', r: 1, f: s => ms(s.p50_us) }, { h: 'p99.9', r: 1, f: s => ms(s.p999_us) }, { h: 'CPU µs/req', r: 1, f: s => num(s.cpu_us_req, 1) });
+  const tbl = card('c12', 'Steps', esc(rep.headline || ''), table(cols, cf.steps, c.live ? 'Steps appear here as each one finishes.' : 'No steps.'));
+  const openTicks = mine.filter(x => x.target_rps > 0 && x.phase === 'measure');
+  const rs = (rep.series || {})[pick];
+  return { tools, html: `<div class="grid">${left}${right}${tbl}</div>`, after() {
+    if (live) { const mx = niceMax((peak || offered) * 1.4 || 1000); gauge($('#g'), { value: offered, max: mx, maxLabel: fk(mx), peak, color: offered > peak ? 'var(--s2)' : 'var(--s1)', text: fmt(offered), label: 'offered' }); }
+    const srv = openTicks.length ? openTicks.map(x => x.rps) : rs ? rs.served.filter(v => v != null) : [], off = openTicks.length ? openTicks.map(x => x.target_rps) : rs ? rs.offered : [];
+    chart($('#c1'), { series: [{ name: 'served', color: 'var(--s1)', values: srv }, { name: 'offered', color: 'var(--s2)', values: off, fill: false, dash: true }], n: Math.max(srv.length, 10), left: true, xl: ['0 s', Math.round(Math.max(srv.length, 10) / 2) + ' s', Math.max(srv.length, 10) + ' s'], step: true, height: 150, unit: ' s', label: 'offered and served' });
+    chart($('#c2'), { series: [{ name: 'p99', color: 'var(--s1)', values: cf.steps.map(s => s.p99_us), fill: false }], n: Math.max(cf.steps.length, 2), cats: cf.steps.map(s => Math.round(s.fraction * 100) + '%'), dots: true, ymin: 100, ymax: niceMax(Math.max(...cf.steps.map(s => s.p99_us), rep.slo_us || 10000) * 1.3), log: true, hline: { v: rep.slo_us || 10000, label: 'limit' }, yfmt: ms, height: 130, label: 'p99 per step' });
+    document.querySelectorAll('#cfgsel .btn').forEach(b => b.onclick = () => { S.pick.ramp = b.dataset.c; drawAll(); });
+  } };
+};
+
+function soakData(c) {
+  const sm = c.samples.filter(s => s.role === 'server' || !s.role);
+  if (sm.length) { const t0 = sm[0].t; return { live: true, x: sm.map(s => (s.t - t0) / 60000), f: k => sm.map(s => s[k]), n: sm.length, t0 }; }
+  const ser = (c.rep && c.rep.series) || {}; if (!ser.rss_mb) return null;
+  return { live: false, x: ser.rss_mb.x, f: k => ser[k] ? ser[k].y : [], n: ser.rss_mb.y.length, t0: null };
+}
+Rv.soak = c => {
+  const rep = c.rep || {}, d = soakData(c); if (!d) return { html: card('c12', 'Soak', '', '<p class="note">No samples yet. The sampler starts after the server is up and the peak has been measured.</p>') };
+  const total = Number(setting('soak', 'minutes', 0)) || (d.x.length ? d.x[d.x.length - 1] : 1), sample = Number(setting('soak', 'sample_s', 10));
+  const nPlanned = d.live ? Math.max(d.n, Math.round(total * 60 / sample)) : d.n, lim = Number(rep.limit_mb_h || setting('soak', 'leak_limit_mb_h', 8));
+  const L = k => { const v = d.f(k); return v.length ? v[v.length - 1] : null; };
+  const slope = rep.slope_mb_h, long = (d.x[d.x.length - 1] || 0) >= 10;
+  const trend = card('c4 start', 'Memory trend', 'last 60 min', `<div class="big">${slope == null || !long ? '–' : (slope >= 0 ? '+' : '−') + num(Math.abs(slope), 1)}<small> MB/hour</small></div><p class="note" style="margin:4px 0 10px">Least-squares slope of resident memory. Limit ${num(lim, 0)} MB/hour.${long ? '' : ' A verdict needs at least 10 minutes.'}</p>` +
+    verdictChip(rep.verdict) + kv([['RSS now', num(L('rss_mb'), 0) + '<small> MB</small>'], ['Java heap used', num(L('heap_used_mb'), 0) + '<small> MB</small>'], ['Heap committed', num(L('heap_committed_mb'), 0) + '<small> MB</small>'], ['Process CPU', num(L('cpu_pct'), 0) + '<small> %</small>']]) +
+    (S.more ? kv([['Non-heap', num(L('nonheap_mb'), 0) + '<small> MB</small>'], ['Threads', num(L('threads'))], ['Open files', num(L('fds'))], ['Collections', num(L('gc_count'))], ['GC time', num(L('gc_ms')) + '<small> ms</small>'], ['Machine CPU', num(L('machine_cpu_pct'), 0) + '<small> %</small>'], ['RSS − heap used − non-heap', num(L('other_mb'), 0) + '<small> MB</small>']]) + '<p class="note" style="margin-top:6px">The last figure is a rough estimate of native memory: it swings with uncollected garbage. The resident-memory trend above is what decides the verdict.</p>' : ''));
+  const charts = card('c8', 'Resident memory', 'MB', '<div id="c1"></div><h3 style="margin-top:10px"><span>Java memory</span><em>MB</em></h3><div id="c2"></div>' + legend([['heap used', 'var(--s2)'], ['heap committed', 'var(--fg-3)'], ['non-heap', 'var(--s1)']]) + '<h3 style="margin-top:10px"><span>Load held</span><em>requests per second</em></h3><div id="c3"></div>');
+  const scans = (rep.scans || []);
+  const sc = card('c12', 'Memory scans during the soak', '', table([{ h: 'At', f: s => d.t0 ? dur(s.t - d.t0) : when(s.t) }, { h: 'Scan', f: s => esc(s.scenario) }, { h: 'Expected', f: s => s.expected === 'min1' ? '≥ 1' : '0' }, { h: 'Found', r: 1, f: s => num(s.found) }, { h: 'Result', f: s => s.ok ? chip('good', 'as expected') : chip('crit', 'unexpected') }], scans, 'None yet.'));
+  const moreC = S.more && d.live ? card('c12', 'Every sampled metric', 'whole soak', sparks(relabel(sampleMap(c.samples)))) : '';
+  return { html: `<div class="grid">${trend}${charts}${sc}${moreC}</div>`, progress: [`Minute ${num(d.x[d.x.length - 1] || 0, 0)} of ${num(total, 0)}`, (d.x[d.x.length - 1] || 0) / total], after() {
+    const n = d.live ? nPlanned : d.n, o = { n, left: true, xl: ['0', d.live ? num(total / 2, 0) + ' min' : num((d.x[d.x.length - 1] || 0) / 2, 0) + ' min', d.live ? num(total, 0) + ' min' : num(d.x[d.x.length - 1] || 0, 0) + ' min'], unit: ' min' };
+    if (d.live && c.rep && c.rep.scans) o.vmarks = c.rep.scans.map(s => ({ k: Math.round((s.t - d.t0) / (sample * 1000)) }));
+    const rss = d.f('rss_mb').filter(v => v != null), lo = Math.floor(Math.min(...rss, 1e9) * .96 / 10) * 10, hi = Math.ceil(Math.max(...rss, 1) * 1.04 / 10) * 10;
+    chart($('#c1'), { ...o, series: [{ name: 'RSS', color: 'var(--s1)', values: d.f('rss_mb') }], ymin: isFinite(lo) ? lo : 0, ymax: hi, yfmt: v => Math.round(v), height: 140, label: 'resident memory' });
+    chart($('#c2'), { ...o, series: [{ name: 'heap used', color: 'var(--s2)', values: d.f('heap_used_mb'), fill: false }, { name: 'heap committed', color: 'var(--fg-3)', values: d.f('heap_committed_mb'), fill: false, dash: true }, { name: 'non-heap', color: 'var(--s1)', values: d.f('nonheap_mb'), fill: false }], yfmt: v => Math.round(v), height: 130, label: 'Java memory' });
+    const rp = d.live ? c.ticks.filter(x => x.phase === 'measure').map(x => x.rps) : (c.rep && c.rep.series && c.rep.series.rps ? c.rep.series.rps.y : []);
+    chart($('#c3'), { n: Math.max(rp.length, 2), series: [{ name: 'req/s', color: 'var(--s1)', values: rp }], left: true, xl: ['0', '', 'now'], unit: ' s', height: 90, label: 'load held' });
+    if (S.more && d.live) drawSparks(relabel(sampleMap(c.samples)));
+  } };
+};
+
+function scanView(c, exp) {
+  const rep = c.rep || {}, rows = [...(rep.scans || [])].reverse(), bad = rows.filter(s => !s.ok).length;
+  const cur = c.live && !S.done ? chip('run', 'running') : '';
+  const strip = (exp === 'scan' && (c.ticks.length || (rep.series && rep.series.rps))) ? card('c12', 'Load while scanning', 'requests per second, last 90 s', '<div id="c1"></div><p class="note">Throughput should not drop while the process is scanned.</p>') : '';
+  const banner = bad ? `<div class="banner on">${chip('crit', 'failed')} <b>${bad} scan${bad > 1 ? 's' : ''} did not turn out as expected: a protected value was found, or the control was not.</b></div>` : '';
+  const cols = [{ h: 'Scan', f: s => esc(s.label || s.scenario) }, { h: 'Expected', r: 1, f: s => s.expected === 'min1' ? '≥ 1' : '0' }, { h: 'Found', r: 1, f: s => num(s.found != null ? s.found : (s.ok ? (s.expected === 'min1' ? '≥ 1' : 0) : '–')) }, { h: 'Time', r: 1, f: s => s.ms ? (s.ms / 1000).toFixed(1) + ' s' : '–' }, { h: 'Result', f: s => s.ok ? chip('good', 'as expected') : chip('crit', 'unexpected') }];
+  if (S.more) cols.splice(2, 0, { h: 'Token', r: 1, f: s => num(s.found_token) }, { h: 'Password', r: 1, f: s => num(s.found_password) }, { h: 'Cycle', r: 1, f: s => s.cycle == null ? '–' : s.cycle });
+  return { html: `<div class="grid">${strip.replace('class="card c12"', 'class="card c12"')}${card('c12', 'Scans', `${rows.length} finished ${cur}`, banner + table(cols, rows, 'Scans appear here as they finish.'))}</div>`, after() {
+    if (strip) { const v = c.ticks.length ? win(c.ticks.filter(x => x.phase === 'measure').map(x => x.rps), 90) : (rep.series.rps || []); chart($('#c1'), { series: [{ name: 'req/s', color: 'var(--s1)', values: v }], n: Math.max(v.length, 10), height: 130, label: 'load while scanning' }); }
+  } };
+}
+Rv.scan = c => scanView(c, 'scan');
+Rv.memory = c => scanView(c, 'memory');
+
+Rv.correct = c => {
+  const rep = c.rep || {}, rows = rep.table || [], last = c.cur, tot = rows.reduce((a, r) => a + (r.verified || 0), 0) + (c.live && last ? 0 : 0), mm = rows.reduce((a, r) => a + (r.mismatches || 0), 0);
+  const ver = c.ticks.map(x => x.verified);
+  const left = card('c4', 'Verified responses', c.live && last && last.route ? `${esc(last.server)} · ${esc(last.route)}` : '', `<div class="big">${num(tot + (c.live ? c.ticks.filter(x => !rows.some(r => r.route === x.route && r.server === x.server)).reduce((a, x) => a + (x.verified || 0), 0) : 0))}</div><p class="note" style="margin:4px 0 10px">responses checked against what their route must return</p>` +
+    (mm ? chip('crit', `${mm} mismatch${mm > 1 ? 'es' : ''}`) : rows.length ? chip('good', 'every response matched') : chip('idle', 'checking')) + (S.more && last ? kv([['p50', ms(last.p50_us)], ['p99', ms(last.p99_us)], ['errors', num(last.errors)], ['req/s', num(last.rps)]]) : ''));
+  const right = card('c8', 'Verified per second', 'last 60 s', '<div id="c1"></div>' + (rows.find(r => r.first_mismatch) ? `<p class="note" style="margin-top:8px">${chip('crit', 'first mismatch')} <code>${esc(rows.find(r => r.first_mismatch).first_mismatch)}</code></p>` : ''));
+  const cols = [{ h: 'Server', f: r => `<span class="sw" style="background:${cfgColor(r.server)}"></span>${esc(r.server)}` }, { h: 'Route', f: r => esc(r.route) }, { h: 'Must return', f: r => `<code>${esc(r.expect)}</code>` }, { h: 'Verified', r: 1, f: r => num(r.verified) }, { h: 'Wrong', r: 1, f: r => r.mismatches ? chip('crit', num(r.mismatches)) : chip('good', '0') }, { h: 'Errors', r: 1, f: r => num(r.errors) }];
+  if (S.more) cols.push({ h: 'req/s', r: 1, f: r => num(r.rps) }, { h: 'p99', r: 1, f: r => ms(r.p99_us) });
+  return { html: `<div class="grid">${left}${right}${card('c12', 'Routes', esc(rep.headline || ''), table(cols, rows, 'Routes appear here as each one finishes.'))}</div>`, after() {
+    const v = c.live ? win(ver, 60) : (rep.series && rep.series.verified) || []; chart($('#c1'), { series: [{ name: 'checks/s', color: 'var(--s1)', values: v }], n: Math.max(v.length, 10), height: 140, label: 'verified per second' });
+  } };
+};
+
+Rv.db = c => {
+  const rep = c.rep || {}, rows = rep.table || [], last = c.cur, same = last ? c.ticks.filter(x => x.driver === last.driver && x.scenario === last.scenario) : [];
+  const col = last ? cfgColor(last.driver) : 'var(--s1)';
+  const left = c.live && last ? card('c4', 'Operations per second', `<span class="sw" style="background:${col}"></span>${esc(last.driver)}`, '<div id="g"></div>' + kv([['p50', ms(last.p50_us)], ['p99', ms(last.p99_us)], ['rows/s', fk(last.rows_s || 0)], ['errors', num(last.errors)]]) +
+    `<h3 style="margin-top:12px"><span>Connections in use</span><em>${last.pool_in_use} of ${last.pool}</em></h3><div class="segs" style="grid-template-columns:repeat(${Math.min(last.pool, 32)},1fr)">${Array.from({ length: Math.min(last.pool, 32) }, (_, i) => `<i class="${i < last.pool_in_use ? 'on' : ''}"></i>`).join('')}</div>` + (S.more ? kv([['threads', num(last.threads)], ['waiting for a connection', num(last.pool_waiting)]]) : '')) :
+    card('c4', 'Result', verdictChip(rep.verdict), `<p class="note" style="margin:0 0 8px">NativePath's operations per second against pgjdbc's, same SQL and pool: 1× is level.</p>` + (rows.length ? kv(rows.map(r => [esc(r.scenario), r.ratio == null ? '–' : num(r.ratio, 2) + '×'])) : '<p class="note">No scenarios yet.</p>') + (rep.headline ? `<p class="note" style="margin-top:8px">${esc(rep.headline)}</p>` : ''));
+  const right = card('c8', 'Operations per second', c.live ? 'last 60 s' : '', '<div id="c1"></div><h3 style="margin-top:12px"><span>Latency</span><em>log scale</em></h3><div id="c2"></div>');
+  const cell = (r, d, f) => r[d] ? f(r[d]) : '<span class="note">–</span>';
+  const tb = card('c7', 'Scenarios', 'operations per second', table([{ h: 'Scenario', f: r => esc(r.scenario) }, { h: 'pgjdbc', r: 1, f: r => cell(r, 'pgjdbc', x => num(x.ops_s)) }, { h: 'NativePath', r: 1, f: r => cell(r, 'nativepath', x => num(x.ops_s)) }, { h: 'Ratio', r: 1, f: r => r.ratio == null ? '–' : num(r.ratio, 2) + '×' },
+    ...(S.more ? [{ h: 'p99 pgjdbc', r: 1, f: r => cell(r, 'pgjdbc', x => ms(x.p99_us)) }, { h: 'p99 NativePath', r: 1, f: r => cell(r, 'nativepath', x => ms(x.p99_us)) }, { h: 'Errors', r: 1, f: r => num(((r.pgjdbc || {}).errors || 0) + ((r.nativepath || {}).errors || 0)) }] : [])], rows, 'Scenarios appear here as each one finishes.') + legend([['pgjdbc', 'var(--s2)'], ['NativePath', 'var(--s1)']]));
+  const sc = card('c5', 'Scans after the load', '', table([{ h: 'Scan', f: s => esc(s.label || s.scenario) }, { h: 'Result', f: s => s.ok ? chip('good', 'as expected') : chip('crit', 'unexpected') }], rep.scans || [], 'Run after the load finishes.'));
+  return { html: `<div class="grid">${left}${right}${tb}${sc}</div>`, after() {
+    if (c.live && last) { const mx = niceMax(Math.max(...same.map(x => x.ops_s), 10) * 1.3); gauge($('#g'), { value: last.ops_s, max: mx, maxLabel: fk(mx), color: col, text: fmt(last.ops_s), label: 'operations per second' }); }
+    const o = win(same.map(x => x.ops_s), 60), l = win(same.map(x => x.p99_us), 60), p = win(same.map(x => x.p50_us), 60);
+    chart($('#c1'), { series: [{ name: 'ops/s', color: col, values: o }], n: 60, height: 130, label: 'operations per second' });
+    chart($('#c2'), { series: [{ name: 'p99', color: 'var(--s2)', values: l, fill: false }, { name: 'p50', color: 'var(--s1)', values: p, fill: false }], n: 60, height: 110, yfmt: ms, log: true, ymin: 100, ymax: 10000000, label: 'latency' });
+  } };
+};
+
+/* ---------- context, plan, strip, header ---------- */
+function ctx(e) { return { exp: e, rep: expReport(e), ticks: S.ticks[e] || [], samples: S.samples[e] || [], cur: S.cur[e] || null, live: S.tab === 'live' && !S.done && (S.expState[e] || {}).state === 'running' }; }
+function planState(e) {
+  const r = expReport(e), st = (S.expState[e] || {}).state || (r && r.state) || 'pending';
+  if (st === 'running') return { ico: ICON.run.replace('<svg', '<svg style="color:var(--s1);width:14px;height:14px;margin:1px"'), cls: 'run' };
+  const v = r && r.verdict;
+  if (v === 'pass') return { ico: ICON.good.replace('<svg', '<svg style="color:var(--good);width:16px;height:16px"') };
+  if (v === 'fail' || st === 'failed') return { ico: ICON.crit.replace('<svg', '<svg style="color:var(--crit);width:16px;height:16px"') };
+  if (v === 'info') return { ico: ICON.warn.replace('<svg', '<svg style="color:var(--warn);width:14px;height:14px;margin:1px"') };
+  return { ico: ICON.idle.replace('<svg', '<svg style="color:var(--fg-3);width:14px;height:14px;margin:1px"') };
+}
+function drawPlan(sel) {
+  const list = expList(); $('.plan').hidden = false;
+  $('#steps').innerHTML = (S.tab === 'results' && !S.sel ? `<button class="step" type="button" data-k="_" aria-current="true"><span class="ico">${ICON.good.replace('<svg', '<svg style="width:16px;height:16px;color:var(--fg-3)"')}</span><span><b>Overview</b><small>every experiment</small></span></button>` :
+    S.tab === 'results' ? `<button class="step" type="button" data-k="_"><span class="ico">${ICON.idle.replace('<svg', '<svg style="width:14px;height:14px;margin:1px;color:var(--fg-3)"')}</span><span><b>Overview</b><small>every experiment</small></span></button>` : '') +
+    list.map(e => { const m = META[e] || { t: e, s: '' }, p = planState(e); return `<button class="step" type="button" data-k="${e}" aria-current="${e === sel}"><span class="ico">${p.ico}</span><span><b>${m.t}</b><small>${m.s}</small></span></button>`; }).join('');
+  $('#steps').querySelectorAll('.step').forEach(b => b.onclick = () => { S.sel = b.dataset.k === '_' ? null : b.dataset.k; if (b.dataset.k === '_') S.finishedView = true; else S.finishedView = false; drawAll(); });
+}
+function drawStripReal(e, c) {
+  const lastS = lastOf((S.samples.soak || []).filter(s => s.role === 'server')), cur = c ? c.cur : null, done = Object.values((S.report && S.report.experiments) || {}).filter(x => x.state === 'done' || x.state === 'failed').length;
+  const vs = Object.values((S.report && S.report.experiments) || {}).map(x => x.verdict), rr = (S.report && S.report.run) || S.run || {};
+  if (S.tab === 'results') { $('#strip').innerHTML = [['Took', S.report && S.report.finished && S.started ? dur(S.report.finished - S.started) : '–'], ['Passed', vs.filter(x => x === 'pass').length + ' of ' + vs.length], ['Failed', String(vs.filter(x => x === 'fail').length)], ['Mode · commit', `${esc(rr.mode || '')} · ${esc(rr.commit || '')}`]].map(x => `<div class="mini"><div class="l"><span>${x[0]}</span></div><div class="v">${x[1]}</div></div>`).join(''); return; }
+  const it = [['Elapsed', S.started ? dur(((S.report && S.report.finished) || Date.now()) - S.started) : '–', null], ['Experiments done', `${done} of ${expList().length}`, expList().length ? 100 * done / expList().length : 0],
+    ['Load now', cur && cur.rps != null ? num(cur.rps) + ' req/s' : cur && cur.ops_s != null ? num(cur.ops_s) + ' ops/s' : '–', null], lastS ? ['Server CPU / RSS', `${num(lastS.cpu_pct, 0)}% · ${num(lastS.rss_mb, 0)} MB`, clamp(lastS.cpu_pct || 0, 0, 100)] : ['Latest p99', cur && cur.p99_us != null ? ms(cur.p99_us) : '–', null]];
+  $('#strip').innerHTML = it.map(x => `<div class="mini"><div class="l"><span>${x[0]}</span></div><div class="v">${x[1]}</div>${x[2] == null ? '' : `<div class="bar"><i style="width:${clamp(x[2], 0, 100)}%"></i></div>`}</div>`).join('');
+}
+
+/* ---------- Live and Results tabs ---------- */
+function drawRun() {
+  const e = selectedExp(), r = (S.report && S.report.run) || S.run;
+  $('#runmeta').innerHTML = r ? `<span class="tag">${esc(r.id || S.runId || '')}</span><span class="tag">${esc(r.mode || '')}</span>${r.hosts && r.hosts.server && r.hosts.server !== 'local' ? `<span class="tag">server ${esc(r.hosts.server)} · client ${esc(r.hosts.client)}</span>` : '<span class="tag">this machine</span>'}<span class="tag">commit ${esc(r.commit || '')}</span>` + (S.fromFile ? '<span class="tag">from a file</span>' : '') : '';
+  $('#note').className = 'banner' + (S.note ? ' on' : ''); $('#note').innerHTML = S.note || '';
+  if (S.err && S.tab !== 'demo') { $('#note').className = 'banner on'; $('#note').innerHTML = `${chip('warn', 'server')} ${esc(S.err)}`; }
+  if (!r && !S.report) { return empty(); }
+  const overview = (S.tab === 'results' || S.finishedView) && !S.sel && S.report;
+  drawPlan(overview ? null : e);
+  if (overview) { const vs = Object.values(S.report.experiments || {}).map(x => x.verdict), np = vs.filter(x => x === 'pass').length, nf = vs.filter(x => x === 'fail').length; head({ title: 'Run summary', kind: S.report.ok == null ? 'running' : S.report.ok ? 'passed' : 'failed', blurb: `${np} of ${vs.length} experiments passed${nf ? ', ' + nf + ' failed' : ''}. Open one for its charts and every metric collected.` }); drawStripReal(null, null); return overview_(); }
+  const c = ctx(e), m = META[e] || { t: e, k: '' };
+  const built = Rv[e] ? Rv[e](c) : { html: card('c12', m.t, '', '<p class="note">No view for this experiment.</p>') };
+  const st = (S.expState[e] || {}).state || (c.rep && c.rep.state);
+  const pr = built.progress || (c.live && c.cur && c.cur.sec != null ? [`Second ${c.cur.sec}`, null] : null);
+  head({ title: m.t, kind: m.k, blurb: BLURB[e] || '' }, (pr && pr[1] != null ? progress(pr[0], pr[1]) : pr ? `<div class="prog"><span>${pr[0]}</span></div>` : '') + `<div class="vtools">${verdictChip(c.rep && c.rep.verdict)}${st === 'running' ? chip('run', 'running') : ''}${built.tools || ''}${['preflight'].includes(e) ? '' : moreSwitch()}</div>`);
+  drawStripReal(e, c);
+  $('#view').innerHTML = built.html; if (built.after) built.after();
+  const mb = $('#more'); if (mb) mb.onclick = () => { S.more = !S.more; drawAll(); };
+  drawTableCard(null);
+}
+function overview_() {
+  const rep = S.report, r = rep.run, exps = rep.experiments || {};
+  const cards = Object.keys(exps).map(k => { const x = exps[k], m = META[k] || { t: k }; return `<button class="card c4 ovc" type="button" data-k="${k}"><h3><span>${m.t}</span><em>${verdictChip(x.verdict)}</em></h3><p style="color:var(--fg-2);margin:0 0 6px">${esc(x.headline || '')}</p><span class="note">${x.state === 'running' ? 'running' : x.state === 'pending' ? 'not run' : x.ended && x.started ? dur(x.ended - x.started) : ''}</span></button>`; }).join('');
+  const st = r.settings || {}, changed = [];
+  Object.keys(st).forEach(sec => Object.keys(st[sec]).forEach(k => { changed.push(`${sec}.${k} = ${st[sec][k]}`); }));
+  $('#view').innerHTML = `<div class="grid">${cards}${card('c12', 'This run', when(r.started), `<dl class="kv"><div><dt>Mode</dt><dd>${esc(r.mode)}</dd></div><div><dt>Commit</dt><dd>${esc(r.commit)}</dd></div><div><dt>Machines</dt><dd>${r.hosts && r.hosts.server !== 'local' ? esc(r.hosts.server) + ' → ' + esc(r.hosts.client) : 'this one'}</dd></div><div><dt>Took</dt><dd>${rep.finished && r.started ? dur(rep.finished - r.started) : '–'}</dd></div></dl><details style="margin-top:10px"><summary>All settings used</summary><p style="font:12px var(--font-mono)">${esc(changed.join('   '))}</p></details>` + (rep.machine ? `<details style="margin-top:6px"><summary>Machines</summary><pre style="white-space:pre-wrap;font:12px var(--font-mono);color:var(--fg-2)">${esc(rep.machine.replace(/ \| /g, '\n'))}</pre></details>` : ''))}</div>`;
+  $('#view').querySelectorAll('.ovc').forEach(b => b.onclick = () => { S.sel = b.dataset.k; S.finishedView = false; drawAll(); });
+  drawTableCard(null);
+}
+function empty() {
+  $('.plan').hidden = true; $('#steps').innerHTML = ''; $('#strip').innerHTML = '';
+  head({ title: S.tab === 'live' ? 'No run in progress' : 'No run opened', kind: S.tab, blurb: S.tab === 'live' ? 'Start a run from the New run tab, or open an earlier one from Results.' : 'Pick a run from the list, or open a results.json file.' });
+  $('#view').innerHTML = card('c12', 'Nothing to show yet', '', `<p>${S.canStart ? '<button class="btn" id="goNew" type="button">New run</button> ' : ''}<button class="btn" id="goRes" type="button">Results</button></p>`);
+  const a = $('#goNew'); if (a) a.onclick = () => setTab('new'); const b = $('#goRes'); if (b) b.onclick = () => setTab('results');
+}
+function drawResultsList() {
+  $('.plan').hidden = true; $('#steps').innerHTML = ''; $('#strip').innerHTML = '';
+  head({ title: 'Results', kind: 'runs', blurb: 'Every run kept in the results directory, newest first. Open one to see its summary, or open a results.json file from another machine.' });
+  const rows = S.runs;
+  $('#view').innerHTML = `<div class="grid">${card('c12', 'Runs', S.served ? 'in ' + esc(S.resultsDir || '') : 'no server: open a file', `<div class="tw">` + (rows.length ? `<table><tr><th>Run</th><th>Started</th><th>Mode</th><th>Experiments</th><th>Result</th><th></th></tr>${rows.map(r => `<tr><td class="num">${esc(r.id)}</td><td>${when(r.started)}</td><td>${esc(r.mode || '')}</td><td>${(r.experiments || []).map(e => { const v = (r.verdicts || {})[e]; return `<span class="sw" title="${e}: ${v || 'no data'}" style="background:${v === 'pass' ? 'var(--good)' : v === 'fail' ? 'var(--crit)' : v === 'info' ? 'var(--warn)' : 'var(--line-2)'}"></span>`; }).join('')}</td><td>${r.running ? chip('run', 'running') : r.ok === true ? chip('good', 'passed') : r.ok === false ? chip('crit', 'failed') : chip('idle', 'unfinished')}</td><td><button class="btn" data-id="${esc(r.id)}" type="button">Open</button></td></tr>`).join('')}</table>` : `<p class="note">${S.served ? 'No runs yet.' : 'The page is not connected to an np-bench server.'}</p>`) + `</div><p style="margin-top:12px"><label class="btn" for="file">Open a results.json…</label><input id="file" type="file" accept=".json,application/json" hidden> <span class="note">or drop one here</span></p>`)}</div>`;
+  $('#view').querySelectorAll('button[data-id]').forEach(b => b.onclick = () => openRun(b.dataset.id, 'results'));
+  const f = $('#file'); if (f) f.onchange = () => loadFile(f.files[0]);
+}
+function loadFile(file) {
+  if (!file) return; const rd = new FileReader();
+  rd.onload = () => { try { const j = JSON.parse(rd.result); if (!j.experiments) throw new Error('not a results.json (no "experiments")'); resetRun(); S.report = j; S.run = j.run; S.started = j.run && j.run.started; S.done = true; S.announced = true; S.fromFile = true; S.tab = 'results'; S.sel = null; S.finishedView = true; drawAll(); } catch (e) { S.err = 'Could not open that file: ' + e.message; drawAll(); } };
+  rd.readAsText(file);
+}
+
+/* ---------- New run ---------- */
+function drawNew() {
+  $('.plan').hidden = true; $('#steps').innerHTML = ''; $('#strip').innerHTML = ''; $('#runmeta').innerHTML = '';
+  head({ title: 'New run', kind: S.newMode === 'check' ? 'quick check' : 'full run', blurb: S.newMode === 'check' ? 'A quick pass over the chosen experiments, to prove the setup works. It measures nothing worth quoting.' : 'The real experiment. Defaults are the values used for published results; change them below.' });
+  if (!S.schema) { $('#view').innerHTML = card('c12', 'Loading', '', '<p class="note">Reading the settings…</p>'); return; }
+  const sc = S.schema, mode = S.newMode;
+  if (!S.newExps) S.newExps = new Set(sc.experiments.map(e => e.id).filter(e => e !== 'db'));
+  const run = (S.runs[0] || {}).running;
+  const val = (sec, p) => (S.newSet[sec] && S.newSet[sec][p.key] !== undefined) ? S.newSet[sec][p.key] : '';
+  const dv = p => mode === 'check' && p.check !== undefined ? p.check : p.default;
+  const input = (sec, p) => { const v = val(sec, p), d = dv(p), changed = v !== '' ? ' changed' : '';
+    const id = `s_${sec}_${p.key}`;
+    if (p.type === 'bool') return `<label class="fld${changed}" for="${id}"><span>${esc(p.label)}</span><select id="${id}" data-s="${sec}" data-k="${p.key}"><option value="">default (${d ? 'yes' : 'no'})</option><option value="1" ${v === '1' ? 'selected' : ''}>yes</option><option value="0" ${v === '0' ? 'selected' : ''}>no</option></select>${p.help ? `<small>${esc(p.help)}</small>` : ''}</label>`;
+    return `<label class="fld${changed}" for="${id}"><span>${esc(p.label)}${p.unit ? ` <em>${esc(p.unit)}</em>` : ''}</span><input id="${id}" data-s="${sec}" data-k="${p.key}" type="${p.type === 'text' ? 'text' : 'number'}" ${p.type === 'float' ? 'step="any"' : ''} ${p.min != null ? `min="${p.min}"` : ''} ${p.max != null ? `max="${p.max}"` : ''} value="${esc(v)}" placeholder="${esc(d === '' ? 'all' : d)}">${p.help ? `<small>${esc(p.help)}</small>` : ''}</label>`; };
+  const expCards = sc.experiments.map(e => `<details class="expset" ${S.newExps.has(e.id) && e.params.length ? 'open' : ''}><summary><label class="chk"><input type="checkbox" data-e="${e.id}" ${S.newExps.has(e.id) ? 'checked' : ''}> <b>${esc(e.title)}</b></label> <span class="note">${esc(e.blurb)}</span></summary>${e.params.length ? `<div class="flds">${e.params.map(p => input(e.id, p)).join('')}</div>` : '<p class="note" style="margin:8px 0 0">Nothing to tune.</p>'}</details>`).join('');
+  const glob = `<details class="expset"><summary><b>Machine and gate</b> <span class="note">pinned cores, quiet-machine wait</span></summary><div class="flds">${sc.global.map(p => input('global', p)).join('')}</div></details>`;
+  const h = S.newHosts;
+  $('#view').innerHTML = `<div class="grid">
+    ${card('c12', 'What to run', '', `<div class="seg" id="mode"><button class="btn" type="button" data-m="check" aria-pressed="${mode === 'check'}">Quick check</button><button class="btn" type="button" data-m="run" aria-pressed="${mode === 'run'}">Full run</button></div>
+      <div class="expsets">${expCards}${glob}</div>`)}
+    ${card('c12', 'Machines', 'empty means this machine', `<div class="flds"><label class="fld" for="h_server"><span>Server host</span><input id="h_server" type="text" value="${esc(h.server)}" placeholder="user@10.0.0.5"><small>Runs the server under test.</small></label><label class="fld" for="h_client"><span>Load generator host</span><input id="h_client" type="text" value="${esc(h.client)}" placeholder="user@10.0.0.6"><small>Drives the load over the real network.</small></label><label class="fld" for="h_ip"><span>Server address for the client</span><input id="h_ip" type="text" value="${esc(h.server_ip)}" placeholder="10.0.0.5"><small>Needed when the hosts are remote.</small></label></div>`)}
+    <section class="card c12"><p id="runerr" class="banner ${S.newErr ? 'on' : ''}">${esc(S.newErr || '')}</p>
+      ${run ? `<button class="btn primary" id="stop" type="button">Stop the run</button> <span class="note">A run is going: ${esc(S.runs[0].id)}</span>` : `<button class="btn primary" id="start" type="button" ${S.newExps.size ? '' : 'disabled'}>${mode === 'check' ? 'Start the check' : 'Start the run'}</button> <span class="note">${S.newExps.size} experiment${S.newExps.size === 1 ? '' : 's'} chosen</span>`}</section></div>`;
+  $('#view').querySelectorAll('#mode .btn').forEach(b => b.onclick = () => { S.newMode = b.dataset.m; drawNew(); });
+  $('#view').querySelectorAll('input[data-e]').forEach(i => i.onchange = () => { i.checked ? S.newExps.add(i.dataset.e) : S.newExps.delete(i.dataset.e); drawNew(); });
+  $('#view').querySelectorAll('[data-s]').forEach(i => i.onchange = () => { const s = i.dataset.s; (S.newSet[s] = S.newSet[s] || {})[i.dataset.k] = i.value; if (i.value === '') delete S.newSet[s][i.dataset.k]; i.closest('.fld').classList.toggle('changed', i.value !== ''); });
+  const bind = (id, k) => { const el = $(id); if (el) el.onchange = () => { S.newHosts[k] = el.value.trim(); }; }; bind('#h_server', 'server'); bind('#h_client', 'client'); bind('#h_ip', 'server_ip');
+  const st = $('#start'); if (st) st.onclick = startRun; const sp = $('#stop'); if (sp) sp.onclick = async () => { try { await api('api/stop', {}); } catch (e) { S.newErr = e.message; } await loadRuns(); drawNew(); };
+}
+async function startRun() {
+  S.newErr = '';
+  const settings = {}; Object.keys(S.newSet).forEach(s => { const o = {}; Object.keys(S.newSet[s]).forEach(k => { if (S.newSet[s][k] !== '') o[k] = S.newSet[s][k]; }); if (Object.keys(o).length) settings[s] = o; });
+  const exps = S.schema.experiments.map(e => e.id).filter(e => S.newExps.has(e));
+  try { const j = await api('api/run', { mode: S.newMode, experiments: exps, settings, hosts: S.newHosts }); await loadRuns(); S.note = ''; await openRun(j.id, 'live'); setTab('live', true); }
+  catch (e) { S.newErr = e.message; drawNew(); }
+}
+
+/* ---------- tabs and the shell ---------- */
+function drawTableCard(t) { $('#tablecard').hidden = true; }
+function drawAll() {
+  document.body.dataset.tab = S.tab;
+  $('#tabs').querySelectorAll('.tab').forEach(b => b.setAttribute('aria-selected', b.dataset.t === S.tab));
+  if (S.tab === 'demo') return;
+  $('#datafeed').hidden = true;
+  if (S.tab === 'new') return drawNew();
+  if (S.tab === 'results' && !S.report) { $('#note').className = 'banner'; return drawResultsList(); }
+  drawRun();
+}
+async function setTab(t, keep) {
+  S.tab = t; S.note = t === 'live' ? S.note : ''; hideTip();
+  $('#datafeed').hidden = t !== 'demo';
+  if (t === 'demo') { demoSelect(demoCur); return; }
+  if (S.served) await loadRuns();
+  if (t === 'live' && !keep) {
+    const run = S.runs.find(r => r.running) || null;
+    if (run && S.runId !== run.id) await openRun(run.id, 'live'); else if (!run && !S.runId) { S.report = null; }
+    if (S.runId && !run && S.done) { S.finishedView = true; }
+  }
+  if (t === 'results' && !keep && S.report && !S.fromFile) { S.report = null; S.runId = null; }
+  if (t === 'new' && S.served && !S.schema) { try { const j = await api('api/config'); S.schema = j.schema; S.lastHosts = j.last_hosts || {}; if (S.lastHosts.server && S.lastHosts.server !== 'local') S.newHosts = { server: S.lastHosts.server, client: S.lastHosts.client, server_ip: S.lastHosts.server_ip }; } catch (e) { S.newErr = e.message; } }
+  drawAll();
+}
+function buildTabs() {
+  const tabs = [['live', 'Live', S.served], ['results', 'Results', true], ['new', 'New run', S.served && S.canStart], ['demo', 'Demo', true]].filter(t => t[2]);
+  $('#tabs').innerHTML = tabs.map(t => `<button class="tab" type="button" data-t="${t[0]}" aria-selected="false">${t[1]}</button>`).join('');
+  $('#tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => setTab(b.dataset.t));
+}
+
+/* ---------- the demo (simulated data) ---------- */
+const DEMO_PLAN = [
+  { k: 'pre', n: 'Preflight', s: 'tools, library, hosts', done: true }, { k: 'mem', n: 'Memory proofs', s: '8 scans, one-shot', done: true },
+  { k: 'throughput', n: 'Throughput', s: 'closed loop' }, { k: 'ramp', n: 'Stress ramp', s: 'open loop, finds the knee' }, { k: 'soak', n: 'Soak', s: 'hours, memory trend' },
+  { k: 'scan', n: 'Scan under load', s: 'plus error paths' }, { k: 'correct', n: 'Correctness', s: 'every response checked' }, { k: 'db', n: 'Database', s: 'sustained SQL load' }
+];
+let demoCur = 'throughput', paused = false, speed = 1, demoStrip = { server: 70, client: 50, net: 300, idle: 87 };
+function demoSteps() {
+  $('#steps').innerHTML = DEMO_PLAN.map(p => `<button class="step" type="button" data-k="${p.k}" aria-current="${p.k === demoCur}" ${p.done ? 'title="Finished earlier in this run (not part of the demo views)"' : ''}><span class="ico">${p.done ? ICON.good.replace('<svg', '<svg style="color:var(--good);width:16px;height:16px"') : p.k === demoCur ? ICON.run.replace('<svg', '<svg style="color:var(--s1);width:14px;height:14px;margin:1px"') : ICON.idle.replace('<svg', '<svg style="color:var(--fg-3);width:14px;height:14px;margin:1px"')}</span><span><b>${p.n}</b><small>${p.s}</small></span></button>`).join('');
+  $('#steps').querySelectorAll('.step').forEach(b => b.onclick = () => { if (V[b.dataset.k]) demoSelect(b.dataset.k); });
+}
+function demoStripDraw() {
+  const it = [['Server CPU', demoStrip.server.toFixed(0) + '%', demoStrip.server], ['Load generator CPU', demoStrip.client.toFixed(0) + '%', demoStrip.client], ['Network', fmt(demoStrip.net) + ' Mbit/s', demoStrip.net / 10], ['Machine idle gate', demoStrip.idle.toFixed(0) + '%', demoStrip.idle]];
+  $('#strip').innerHTML = it.map(x => `<div class="mini"><div class="l"><span>${x[0]}</span></div><div class="v">${x[1]}</div><div class="bar"><i style="width:${clamp(x[2], 0, 100)}%"></i></div></div>`).join('');
+}
+function demoDraw() {
+  if (S.tab !== 'demo') return;
+  const v = V[demoCur]; v.render();
+  const c = v.chips(); demoStrip = { server: clamp(demoStrip.server * .7 + c.server * .3 + (R() - .5) * 3, 5, 99), client: clamp(demoStrip.client * .7 + c.client * .3 + (R() - .5) * 3, 5, 99), net: c.net * jit(1, .04), idle: c.idle };
+  demoStripDraw();
+}
+function demoSelect(k) {
+  demoCur = k; R = rng(11 + k.length * 7); const v = V[k]; v.reset(); for (let i = 0; i < (k === 'soak' ? 70 : k === 'ramp' ? 34 : k === 'scan' ? 50 : 45); i++) v.tick();
+  hideTip(); document.body.dataset.tab = 'demo'; $('#note').className = 'banner'; v.build(); demoSteps(); demoDraw();
+  $('#runmeta').innerHTML = '<span class="tag">2 machines · server 10.0.0.5 · client 10.0.0.6</span><span class="tag">4 cores pinned each</span><span class="tag">Ubuntu 24.04 · JDK 23</span><span class="tag sim">SIMULATED DATA</span>';
+  $('#tablecard').hidden = true;
+}
+function demoLoop() { if (paused || S.tab !== 'demo') return; for (let i = 0; i < speed; i++) V[demoCur].tick(); demoDraw(); }
+
+$('#pause').onclick = e => { paused = !paused; e.target.setAttribute('aria-pressed', paused); e.target.textContent = paused ? 'Resume' : 'Pause'; };
+$('#spd').onclick = e => { speed = speed === 1 ? 4 : speed === 4 ? 16 : 1; e.target.textContent = speed + '×'; };
+addEventListener('resize', () => { if (S.tab === 'demo') demoDraw(); else if (Date.now() > S.hoverUntil) drawAll(); });
+$('#view').addEventListener('pointermove', () => { S.hoverUntil = Date.now() + 1500; });
+['dragover', 'drop'].forEach(n => addEventListener(n, e => { e.preventDefault(); if (n === 'drop' && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); }));
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) { paused = true; $('#pause').setAttribute('aria-pressed', 'true'); $('#pause').textContent = 'Resume'; }
+
+(async function boot() {
+  try { const st = await api('api/status'); S.served = !!st.serving; S.canStart = !!st.can_start; S.resultsDir = st.results; S.follow = st.follow; } catch (e) { S.served = false; }
+  buildTabs();
+  const h = (location.hash || '').slice(1), hp = h.split('/');   // #results/<run>/<experiment>[/more], or #new, #live, #demo
+  if (S.served && hp[0] === 'results' && hp[1]) {
+    await loadRuns(); await openRun(hp[1], 'results'); S.sel = hp[2] || null; S.finishedView = !hp[2]; S.more = hp[3] === 'more'; S.tab = 'results'; await setTab('results', true);
+  } else if (S.served && (hp[0] === 'new')) { await loadRuns(); await setTab('new'); }
+  else if (S.served) {
+    await loadRuns();
+    const live = S.runs.find(r => r.running) || (S.follow && S.runs.find(r => r.id === S.follow));
+    if (live && live.running) { await openRun(live.id, 'live'); S.tab = 'live'; }
+    else if (S.runs.length && h !== 'demo') { await openRun(S.runs[0].id, 'results'); S.tab = 'results'; S.finishedView = true; }
+    else S.tab = S.canStart ? 'new' : 'results';
+    await setTab(S.tab, true);
+  } else { S.tab = V[h] || h === 'demo' ? 'demo' : 'demo'; await setTab('demo'); if (V[h]) demoSelect(h); }
+  setInterval(demoLoop, 500); setInterval(poll, 1000);
+})();
+})();
+</script>

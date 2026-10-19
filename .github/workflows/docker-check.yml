@@ -1,0 +1,73 @@
+name: Docker check
+
+# The benchmark in Docker: build the image (Rocky Linux 8, the release bundle inside) and run the quick
+# check, memory proofs included, with PostgreSQL as a service. Reusable: release.yml requires it before
+# it publishes. Also runs when the benchmark, the Rust workspace, the Maven build or the image change,
+# and weekly, which catches drift in what the image downloads (the JDK, Maven, Rust).
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+  push:
+    paths:
+      - 'np-benchmarks/**'
+      - 'np-http-server/**'
+      - 'np-memory/**'
+      - 'np-ffi/**'
+      - 'np-db*/**'
+      - 'np-binding/**'
+      - 'np-http-spring-starter/**'
+      - 'Cargo.*'
+      - 'pom.xml'
+      - '.github/workflows/docker-check.yml'
+
+jobs:
+  check:
+    name: Quick check in Docker (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Versions
+        run: |
+          . np-benchmarks/versions.env
+          {
+            echo "BASE_IMAGE=$BASE_IMAGE"; echo "JDK_MAJOR=$JDK_MAJOR"
+            echo "RUST_VERSION=$RUST_VERSION"; echo "MAVEN_VERSION=$MAVEN_VERSION"
+          } >> "$GITHUB_ENV"
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: np-benchmarks/docker/Dockerfile
+          load: true
+          tags: np-bench:local
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_IMAGE }}
+            JDK_MAJOR=${{ env.JDK_MAJOR }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
+            MAVEN_VERSION=${{ env.MAVEN_VERSION }}
+            NP_VERSION=ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Preflight, the memory proofs (a control that is not found fails the run), a server wiring pass and
+      # the database experiment against a PostgreSQL service. No timing is gated: a shared runner's
+      # numbers are not evidence.
+      - name: Check
+        run: NP_NO_BUILD=1 np-benchmarks/bench.sh check --only preflight,memory,scan,correct,db --set scan.scenarios="control secure"
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-check-results
+          path: np-results/

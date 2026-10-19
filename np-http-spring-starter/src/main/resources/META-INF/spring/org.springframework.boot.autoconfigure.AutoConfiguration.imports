@@ -1,0 +1,3 @@
+ro.bitboy.nativepath.spring.boot.NativePathHttpAutoConfiguration
+ro.bitboy.nativepath.spring.boot.NativePathServerAutoConfiguration
+ro.bitboy.nativepath.spring.boot.NativePathServletServerAutoConfiguration

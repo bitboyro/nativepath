@@ -1,0 +1,19 @@
+[package]
+name = "np-http-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+np-memory = { path = "../np-memory" }
+bytes = "1.6"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+# ring only: the client already uses it; avoids a second crypto library (aws-lc-rs)
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros"] }

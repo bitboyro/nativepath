@@ -1,0 +1,14 @@
+[package]
+name = "np-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "nativepath"
+crate-type = ["cdylib"]
+
+[dependencies]
+np-http-client = { path = "../np-http-client" }
+np-http-server = { path = "../np-http-server" }
+libc = "0.2"
+np-db-postgres = { path = "../np-db-postgres" }

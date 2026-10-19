@@ -1,0 +1,314 @@
+name: Benchmarks
+
+# Long-running (tens of minutes): memory proofs and performance runs. Only for releases: a pushed
+# version tag (v1.2.3; publishing a GitHub release creates one), or by hand from the Actions tab or
+# `gh workflow run bench.yml` (available once this file is on the default branch). Branch pushes
+# run only the quick tests (ci.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rounds per benchmark (odd rounds in order, even rounds reversed)
+        default: '3'
+      seconds:
+        description: Seconds per measurement
+        default: '8'
+  push:
+    tags: ['v*']
+
+jobs:
+  bench:
+    name: Memory proofs and server benchmarks (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    defaults:
+      run:
+        # -eo pipefail: a failing script piped into tee fails the step instead of passing as tee.
+        shell: bash
+    env:
+      ROUNDS: ${{ inputs.rounds || '3' }}
+      SECONDS_PER_RUN: ${{ inputs.seconds || '8' }}
+      QUIET_IDLE: '80'
+      QUIET_MAX_WAIT_S: '300'
+      OUT: bench-results
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '23'
+          cache: maven
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: |
+          cargo build --release -p np-ffi
+          cargo build --release -p np-http-server --examples
+          mvn -B -q -DskipTests compile
+          . np-benchmarks/scripts/lib.sh && fetch_tcnative
+
+      - name: Record the machine
+        run: |
+          mkdir -p "$OUT"
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "date: $(date -u +%FT%TZ)"
+            echo "runner: $RUNNER_NAME ($RUNNER_OS, $RUNNER_ARCH)"
+            echo "cores: $(nproc)"
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz' || true
+            free -h | head -2
+            echo "java: $(java -version 2>&1 | head -1)"
+            echo "rustc: $(rustc --version)"
+            echo "ip_local_port_range: $(cat /proc/sys/net/ipv4/ip_local_port_range)"
+            echo "tcp_tw_reuse: $(cat /proc/sys/net/ipv4/tcp_tw_reuse)"
+          } | tee "$OUT/machine.txt"
+
+      # Whole-process memory scans for secret values after real requests (Linux: /proc/self/maps
+      # and process_vm_readv). Linux's allocator does not clear freed memory, so zero copies on
+      # the protected paths here also shows the zeroizing allocator at work.
+      - name: Memory proofs
+        run: |
+          CP=$(. np-benchmarks/scripts/lib.sh && bench_classpath "$PWD")
+          echo "classpath entries: $(echo "$CP" | tr ':' '\n' | wc -l)"
+          status=0
+          scan() { # class scenario log
+            echo "=== $2" | tee -a "$3"
+            java --enable-native-access=ALL-UNNAMED -cp "$CP" "ro.bitboy.nativepath.benchmarks.$1" "$2" > scan.out 2>&1 || status=1
+            grep -v WARNING scan.out | tee -a "$3" || true
+          }
+          for s in control secure; do scan ServerResidueScanTest $s "$OUT/memory_server.log"; done
+          for s in heap-control native-only pooled-big secret-stream spring-secret guards; do
+            scan ResidueScanTest $s "$OUT/memory_client.log"
+          done
+          exit $status
+        continue-on-error: true
+
+      - name: Server cost by layer (HTTP)
+        run: np-benchmarks/scripts/server_layers.sh "$OUT/layers" 2>&1 | tee "$OUT/layers.log"
+        continue-on-error: true
+
+      - name: HTTPS against Netty (JDK TLS and BoringSSL)
+        run: np-benchmarks/scripts/server_tls.sh "$OUT/tls" 2>&1 | tee "$OUT/tls.log"
+        continue-on-error: true
+
+      - name: Tables and summary
+        if: always()
+        run: |
+          # A missing file or a grep without matches must not fail the summary.
+          set +e +o pipefail
+          for f in layers/layers tls/tls; do
+            [ -f "$OUT/$f.jsonl" ] && python3 np-benchmarks/scripts/server_layers_table.py "$OUT/$f.jsonl" > "$OUT/$f.table.txt" || true
+          done
+          {
+            echo "## Benchmark run $(date -u +%F)"
+            echo '```'; cat "$OUT/machine.txt"; echo '```'
+            echo "### Memory proofs"
+            echo '```'; grep -hE '^===|found|PASS|FAIL|RESULT' "$OUT"/memory_*.log 2>/dev/null; echo '```'
+            for f in layers/layers tls/tls; do
+              [ -f "$OUT/$f.table.txt" ] || continue
+              echo "### $f"; echo '```'; cat "$OUT/$f.table.txt"; echo '```'
+            done
+            if [ -f "$OUT/layers/server_path_jmh.txt" ]; then
+              echo "### ServerPathBenchmark (JMH, no network)"; echo '```'
+              grep -E '^(Benchmark|ServerPathBenchmark)' "$OUT/layers/server_path_jmh.txt"; echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ github.run_number }}
+          path: bench-results/
+
+  # np-db on its own runner, in parallel: PostgreSQL in Docker (TLS on), memory scans over plaintext
+  # and TLS, then pgjdbc vs NativePath. Linux avoids the macOS Docker Desktop port forwarding that
+  # adds a round-trip cost and runs out of client ports in openConnection.
+  db:
+    name: np-db memory proofs and pgjdbc benchmark (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      QUIET_IDLE: '80'
+      QUIET_MAX_WAIT_S: '300'
+      OUT: db-bench-results
+      NP_PG_DIR: ${{ github.workspace }}/target/pg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '23'
+          cache: maven
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: |
+          cargo build --release -p np-ffi
+          mvn -B -q -DskipTests compile
+
+      - name: Start PostgreSQL 17 (SCRAM, TLS on)
+        run: |
+          np-benchmarks/pg_test_db.sh
+          mkdir -p "$OUT"
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "date: $(date -u +%FT%TZ)"
+            echo "runner: $RUNNER_NAME ($RUNNER_OS, $RUNNER_ARCH)"
+            echo "cores: $(nproc)"
+            lscpu | grep -E 'Model name|^CPU\(s\)' || true
+            echo "java: $(java -version 2>&1 | head -1)"
+            echo "postgres: $(docker exec np-pg postgres --version)"
+          } | tee "$OUT/machine.txt"
+
+      # Whole-process scans for the password and a secret column while and after they pass through
+      # the driver, with the connection still open, over plaintext and TLS.
+      - name: Memory proofs (np-db)
+        run: |
+          CP="$PWD/np-db/target/classes:$(. np-benchmarks/scripts/lib.sh && bench_classpath "$PWD")"
+          LIB="$PWD/target/release/libnativepath.so"
+          status=0
+          for mode in disable require; do
+            for s in db-control db-password db-secret; do
+              echo "=== sslmode=$mode $s" | tee -a "$OUT/memory_db.log"
+              NP_PG_SSLMODE=$mode java --enable-native-access=ALL-UNNAMED -Dnativepath.lib="$LIB" -cp "$CP" \
+                ro.bitboy.nativepath.benchmarks.DbResidueScanTest "$s" "$NP_PG_DIR" > scan.out 2>&1 || status=1
+              grep -v WARNING scan.out | tee -a "$OUT/memory_db.log" || true
+            done
+          done
+          exit $status
+        continue-on-error: true
+
+      - name: pgjdbc vs NativePath (JMH)
+        run: |
+          np-benchmarks/scripts/db_bench.sh "$OUT" 2>&1 \
+            | grep -vE '^# (Warmup|Measurement) Iteration|^Iteration' | tee "$OUT/db_bench.log"
+        continue-on-error: true
+
+      - name: Table and summary
+        if: always()
+        run: |
+          set +e +o pipefail
+          [ -f "$OUT/db_driver_bench.json" ] && python3 np-benchmarks/scripts/db_bench_table.py "$OUT/db_driver_bench.json" > "$OUT/db_bench.table.txt"
+          {
+            echo "## np-db run $(date -u +%F)"
+            echo '```'; cat "$OUT/machine.txt"; echo '```'
+            echo "### Memory proofs"
+            echo '```'; grep -hE '^===|found|PASS|FAIL|RESULT|refused' "$OUT/memory_db.log" 2>/dev/null; echo '```'
+            if [ -f "$OUT/db_bench.table.txt" ]; then
+              echo "### pgjdbc vs NativePath"; echo '```'; cat "$OUT/db_bench.table.txt"; echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-bench-results-${{ github.run_number }}
+          path: db-bench-results/
+
+  tomcat:
+    name: Spring MVC on Tomcat vs WebFlux on NativePath and Netty (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      ROUNDS: ${{ inputs.rounds || '3' }}
+      SECONDS_PER_RUN: ${{ inputs.seconds || '8' }}
+      QUIET_IDLE: '80'
+      QUIET_MAX_WAIT_S: '300'
+      OUT: bench-results
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '23'
+          cache: maven
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: |
+          cargo build --release -p np-ffi
+          cargo build --release -p np-http-server --examples
+          mvn -B -q -DskipTests compile
+          . np-benchmarks/scripts/lib.sh && fetch_tcnative
+
+      - name: Record the machine
+        run: |
+          mkdir -p "$OUT"
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "date: $(date -u +%FT%TZ)"
+            echo "runner: $RUNNER_NAME ($RUNNER_OS, $RUNNER_ARCH)"
+            echo "cores: $(nproc)"
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz' || true
+            free -h | head -2
+            echo "java: $(java -version 2>&1 | head -1)"
+          } | tee "$OUT/machine.txt"
+
+      # Smoke check: every route answers on standard Tomcat and on the NativePath transport, over
+      # HTTP and HTTPS, before any number is taken.
+      - name: Routes on both transports
+        run: |
+          set -eo pipefail
+          CP=$(. np-benchmarks/scripts/lib.sh && bench_classpath "$PWD")
+          CA=$PWD/np-http-server/tests/fixtures/test-cert.pem
+          check() { # port scheme args...
+            local port=$1 scheme=$2; shift 2
+            (cd np-benchmarks && exec java --enable-native-access=ALL-UNNAMED -cp "$CP" ro.bitboy.nativepath.benchmarks.MvcBenchApp $port "$@") > "$OUT/smoke_$port.log" 2>&1 &
+            local pid=$! u=$scheme://127.0.0.1:$port
+            for _ in $(seq 1 120); do curl -sf --cacert "$CA" -o /dev/null "$u/hello" && break; sleep 0.5; done
+            test "$(curl -sf --cacert "$CA" "$u/hello")" = hello
+            test "$(curl -sf --cacert "$CA" "$u/payload?size=524288" | wc -c)" -eq 524288
+            test "$(curl -sf --cacert "$CA" -X POST --data-binary abc123 -H 'Content-Type: application/octet-stream' "$u/echo")" = abc123
+            curl -sf --cacert "$CA" -X POST --data-binary @np-benchmarks/scripts/order.json -H 'Content-Type: application/json' "$u/json" | grep -q ord-
+            test "$(curl -s --cacert "$CA" -o /dev/null -w '%{http_code}' "$u/nope")" = 404
+            test "$(curl -sf --cacert "$CA" "$u/slow?ms=20")" = slow
+            test "$(curl -sf --cacert "$CA" "$u/deferred?ms=20")" = deferred
+            test "$(curl -sf --cacert "$CA" "$u/callable?ms=20")" = callable
+            test "$(curl -s --cacert "$CA" -o /dev/null -w '%{http_code}' -m 10 "$u/hang")" = 503
+            echo "port $port ($scheme $*): routes OK"
+            kill $pid; wait $pid || true
+          }
+          check 18400 http
+          check 18401 https tls
+          check 18402 http --bench.transport=nativepath
+          check 18403 https tls --bench.transport=nativepath
+          check 18404 http --bench.transport=nativepath --bench.dispatch=lane
+
+      - name: Spring MVC on Tomcat vs WebFlux (HTTP and HTTPS)
+        run: |
+          set -o pipefail
+          np-benchmarks/scripts/server_tomcat.sh "$OUT/tomcat" 2>&1 | tee "$OUT/tomcat.log"
+
+      - name: Table and summary
+        if: always()
+        run: |
+          set +e +o pipefail
+          [ -f "$OUT/tomcat/tomcat.jsonl" ] && python3 np-benchmarks/scripts/server_layers_table.py "$OUT/tomcat/tomcat.jsonl" > "$OUT/tomcat/tomcat.table.txt"
+          {
+            echo "## Tomcat benchmark run $(date -u +%F)"
+            echo '```'; cat "$OUT/machine.txt"; echo '```'
+            if [ -f "$OUT/tomcat/tomcat.table.txt" ]; then
+              echo "### tomcat"; echo '```'; cat "$OUT/tomcat/tomcat.table.txt"; echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-tomcat-${{ github.run_number }}
+          path: bench-results/

@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "about": "Every tunable of np-bench. `default` is used by `np-bench run`, `check` by `np-bench check` (omitted: same as default). The CLI (--set exp.key=value), a --config file and the dashboard's run panel all read this file; scripts receive each value as NP_<EXPERIMENT>_<KEY>.",
+  "global": [
+    { "key": "quiet_idle", "label": "Quiet machine gate", "type": "int", "default": 85, "check": 0, "min": 0, "max": 100, "unit": "% idle", "help": "Each measurement waits until the machine is at least this idle (0 skips the wait). Waits at most 10 minutes, then aborts rather than measure noise." },
+    { "key": "cores", "label": "Pinned cores", "type": "int", "default": 4, "min": 1, "max": 256, "unit": "cores", "help": "Pin the server and the load generator each to this many cores (two machines only)." }
+  ],
+  "experiments": [
+    {
+      "id": "preflight", "title": "Preflight", "blurb": "Tools, native library, load generator, ssh, platform match.",
+      "params": []
+    },
+    {
+      "id": "memory", "title": "Memory proofs", "blurb": "One-shot whole-process scans for planted secret values, client and server.",
+      "params": []
+    },
+    {
+      "id": "throughput", "title": "Throughput and latency", "blurb": "Closed loop: the most each server delivers, per configuration; configurations alternate each round.",
+      "params": [
+        { "key": "rounds", "label": "Rounds", "type": "int", "default": 3, "check": 1, "min": 1, "max": 50, "help": "Odd rounds run configurations in order, even rounds in reverse." },
+        { "key": "seconds", "label": "Seconds per measurement", "type": "int", "default": 10, "check": 2, "min": 1, "max": 3600, "unit": "s" },
+        { "key": "configs", "label": "Configurations", "type": "text", "default": "", "help": "Space-separated subset; empty runs all (spring_nativepath spring_netty np_tls netty_jdk_tls netty_openssl_tls)." }
+      ]
+    },
+    {
+      "id": "ramp", "title": "Stress ramp", "blurb": "Open loop: offers fractions of the peak rate and reports the knee.",
+      "params": [
+        { "key": "seconds", "label": "Seconds per step", "type": "int", "default": 8, "check": 3, "min": 1, "max": 600, "unit": "s" },
+        { "key": "steps", "label": "Steps (fractions of peak)", "type": "text", "default": "0.3 0.5 0.7 0.8 0.9 1.0 1.1 1.3", "check": "0.5 1.0 1.3" },
+        { "key": "connections", "label": "Connections", "type": "int", "default": 128, "check": 32, "min": 1, "max": 4096, "help": "The listen backlog is 128; more cannot all connect at once." },
+        { "key": "configs", "label": "Configurations", "type": "text", "default": "engine spring_nativepath spring_nativepath_tuned spring_nativepath_shed spring_netty", "check": "spring_nativepath", "help": "Subset of: engine spring_nativepath spring_nativepath_tuned spring_nativepath_shed spring_netty." },
+        { "key": "slo_ms", "label": "p99 limit", "type": "float", "default": 10, "min": 0.1, "max": 10000, "unit": "ms", "help": "The knee is the highest step served in full with p99 under this limit." }
+      ]
+    },
+    {
+      "id": "soak", "title": "Soak", "blurb": "A steady load for a long time while the server host is sampled; memory scans at intervals.",
+      "params": [
+        { "key": "minutes", "label": "Duration", "type": "float", "default": 120, "check": 2, "min": 0.5, "max": 10080, "unit": "min" },
+        { "key": "sample_s", "label": "Sample every", "type": "int", "default": 10, "check": 2, "min": 1, "max": 600, "unit": "s" },
+        { "key": "connections", "label": "Connections", "type": "int", "default": 64, "check": 16, "min": 1, "max": 4096 },
+        { "key": "load_pct", "label": "Load", "type": "int", "default": 60, "min": 5, "max": 150, "unit": "% of peak", "help": "Open-loop rate as a share of the closed-loop peak measured first." },
+        { "key": "scan_every_min", "label": "Memory scan every", "type": "float", "default": 15, "check": 1, "min": 0, "max": 1440, "unit": "min", "help": "0 disables the scans." },
+        { "key": "leak_limit_mb_h", "label": "Leak limit", "type": "float", "default": 8, "min": 0, "max": 100000, "unit": "MB/hour", "help": "Resident memory growing faster than this over the last hour fails the soak." }
+      ]
+    },
+    {
+      "id": "scan", "title": "Scan under load", "blurb": "Planted secrets are sent while the server is busy, then the process is scanned; also after error, timeout and cancel paths.",
+      "params": [
+        { "key": "connections", "label": "Background load connections", "type": "int", "default": 16, "check": 8, "min": 0, "max": 4096, "help": "0 scans an idle server." },
+        { "key": "cycles", "label": "Cycles", "type": "int", "default": 3, "check": 1, "min": 1, "max": 100, "help": "Every scenario is repeated this many times." },
+        { "key": "scenarios", "label": "Scenarios", "type": "text", "default": "control secure error abort timeout", "check": "control secure", "help": "Subset of: control secure error abort timeout." }
+      ]
+    },
+    {
+      "id": "correct", "title": "Correctness under load", "blurb": "Every response is checked against what its route must return.",
+      "params": [
+        { "key": "seconds", "label": "Seconds per route", "type": "int", "default": 30, "check": 3, "min": 1, "max": 3600, "unit": "s" },
+        { "key": "connections", "label": "Connections", "type": "int", "default": 16, "check": 8, "min": 1, "max": 4096 },
+        { "key": "servers", "label": "Servers", "type": "text", "default": "nativepath netty", "check": "nativepath", "help": "nativepath, netty or both." },
+        { "key": "tls", "label": "Over TLS", "type": "bool", "default": false },
+        { "key": "stop_on_mismatch", "label": "Stop at the first mismatch", "type": "bool", "default": true }
+      ]
+    },
+    {
+      "id": "db", "title": "Database under load", "blurb": "The same SQL through the same pool, pgjdbc against NativePath. Needs Docker.",
+      "params": [
+        { "key": "seconds", "label": "Seconds per scenario", "type": "int", "default": 30, "check": 3, "min": 1, "max": 3600, "unit": "s" },
+        { "key": "threads", "label": "Client threads", "type": "int", "default": 16, "check": 8, "min": 1, "max": 1024 },
+        { "key": "pool", "label": "Pool size", "type": "int", "default": 16, "min": 1, "max": 1024 },
+        { "key": "drivers", "label": "Drivers", "type": "text", "default": "pgjdbc nativepath", "help": "pgjdbc, nativepath or both." },
+        { "key": "scenarios", "label": "Scenarios", "type": "text", "default": "select_pk insert rows10000 batch1000", "check": "select_pk insert", "help": "Subset of: select_pk insert rows10000 batch1000." }
+      ]
+    }
+  ]
+}

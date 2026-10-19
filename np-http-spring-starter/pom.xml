@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>ro.bitboy.nativepath</groupId>
+        <artifactId>np-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>np-http-spring-starter</artifactId>
+    <packaging>jar</packaging>
+
+    <name>NativePath Spring Boot Starter</name>
+    <description>Drop-in ClientHttpRequestFactory for Spring RestClient backed by NativePath</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>ro.bitboy.nativepath</groupId>
+            <artifactId>np-binding</artifactId>
+            <version>0.1.0-SNAPSHOT</version>
+        </dependency>
+        <!-- Spring Web only (no embedded server needed for the factory) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <version>6.1.14</version>
+        </dependency>
+        <!-- Auto-configuration (optional: the factory and client work without Spring Boot) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+            <version>3.3.5</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot</artifactId>
+            <version>3.3.5</version>
+            <optional>true</optional>
+        </dependency>
+        <!-- Only needed for the WebFlux server adapter (NativePathReactiveWebServerFactory) -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+            <version>3.6.11</version>
+            <optional>true</optional>
+        </dependency>
+        <!-- Only needed for the Spring MVC server (Tomcat's Catalina on the engine): apps bring it
+             with spring-boot-starter-web; version managed by Boot 3.3.5 -->
+        <dependency>
+            <groupId>org.apache.tomcat.embed</groupId>
+            <artifactId>tomcat-embed-core</artifactId>
+            <version>10.1.31</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webflux</artifactId>
+            <version>6.1.14</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <version>6.1.14</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Present in tests to prove the NativePath server is chosen even when Netty is available -->
+        <dependency>
+            <groupId>io.projectreactor.netty</groupId>
+            <artifactId>reactor-netty-http</artifactId>
+            <version>1.1.24</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-test</artifactId>
+            <version>3.3.5</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.25.3</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Only needed for NativePathSecretClient (typed JSON in secret mode) -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.17.2</version>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>

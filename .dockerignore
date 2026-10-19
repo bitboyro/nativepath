@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+target
+**/target
+np-results
+dist
+*.log
+bench-cert.pem
+bench-key.pem
+bench.cp

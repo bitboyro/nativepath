@@ -1,0 +1,344 @@
+#!/bin/bash
+# np-bench: the NativePath benchmark experiment, from one entry point.
+#
+#   np-bench check [options]     quick pass over the chosen experiments: proves the setup works
+#   np-bench run   [options]     the real experiment
+#   np-bench serve [options]     the dashboard: pick tests, tune them, start runs, watch live, open results
+#   np-bench setup HOST...       check that hosts can run the containers (Docker) and tune them, over ssh
+#   np-bench list                the experiments and every setting they take
+#
+# Which experiments (default: all but db):
+#   --only a,b       preflight memory throughput ramp scan correct soak db
+#   --with-db        add the PostgreSQL experiment (Docker needed on this machine)
+#
+# Settings (every one has a default for `run` and a shorter one for `check`; `np-bench list` shows them):
+#   --set exp.key=value      for example --set soak.minutes=30 --set ramp.slo_ms=5   (repeatable)
+#   --config FILE.json       {"soak": {"minutes": 30}, "ramp": {"slo_ms": 5}}
+#   --rounds N, --seconds N  shortcuts for throughput.rounds and throughput.seconds
+#
+# Machines:
+#   --server HOST --client HOST --server-ip IP   two machines (ssh user@host, or "local"); without
+#                    them everything runs on this machine
+#   --cores N        pin the server and the load generator to N cores each (two machines; default 4)
+#   --runtime docker|native   how remote hosts run it: docker (default; each host needs only Docker and ssh
+#                    key login, and runs the benchmark image) or native (rsync the tree or a --bundle, needs
+#                    a JDK and tools on the host)
+#   --image TAG      the image to run on the hosts (default np-bench:local; np-benchmarks/bench.sh builds it)
+#   --bundle FILE    with --runtime native: a release bundle (.tar.gz) to copy to the hosts
+#
+# Output (default np-results/<timestamp>-<mode>/):
+#   events.jsonl     every measurement as it happens, one JSON object per line (the dashboard reads it)
+#   results.json     the finished summary: verdict per experiment, key numbers, downsampled series
+#   run.json         what was run: settings, machines, commit
+#   <experiment>.log what each experiment printed
+#
+#   --out DIR        another results directory
+#   --serve [--port N]   with run/check: also serve the dashboard for this run
+#
+# Works from a source checkout (builds what it needs; Rust, Maven, JDK 22+) and from a release bundle
+# (nothing to build; a JDK 22+ on each machine).
+set -u
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+SCRIPTS=$ROOT/np-benchmarks/scripts
+. "$ROOT/np-benchmarks/remote/hosts.sh"   # on, sync_tree, describe_hosts ... (sources lib.sh)
+
+usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
+
+cmd=${1:-help}
+[ $# -gt 0 ] && shift
+
+if [ "$cmd" = setup ]; then
+  native=0; hosts=()
+  for a in "$@"; do case $a in --native) native=1 ;; *) hosts+=("$a") ;; esac; done
+  [ ${#hosts[@]} -gt 0 ] || { echo "usage: np-bench setup [--native] HOST..." >&2; exit 2; }
+  for h in "${hosts[@]}"; do
+    echo "== $h"
+    if [ "$native" = 1 ]; then   # Ubuntu only: installs a JDK and tools for running without Docker
+      ssh -o BatchMode=yes "$h" 'RUNTIME_ONLY=1 bash -s' < "$ROOT/np-benchmarks/remote/setup-ubuntu.sh" || exit 1
+    else
+      ssh -o BatchMode=yes "$h" 'bash -s' < "$ROOT/np-benchmarks/remote/tune-host.sh" || exit 1
+    fi
+  done
+  exit 0
+fi
+
+ONLY="" WITH_DB=0 OUT_DIR="" NP_BUNDLE="" CONFIG="" SERVE=0 PORT=8765 BIND=127.0.0.1 RESULTS_ROOT=np-results WANT_RUNTIME="" TRUST_BIND=""
+declare -a SETS=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --server) SERVER=$2; shift 2 ;;
+    --client) CLIENT=$2; shift 2 ;;
+    --server-ip) SERVER_IP=$2; shift 2 ;;
+    --cores) CORES=$2; shift 2 ;;
+    --rounds) SETS+=("throughput.rounds=$2"); shift 2 ;;
+    --seconds) SETS+=("throughput.seconds=$2"); shift 2 ;;
+    --set) SETS+=("$2"); shift 2 ;;
+    --config) CONFIG=$2; shift 2 ;;
+    --only) ONLY=$2; shift 2 ;;
+    --with-db) WITH_DB=1; shift ;;
+    --bundle) NP_BUNDLE=$2; shift 2 ;;
+    --runtime) WANT_RUNTIME=$2; shift 2 ;;
+    --native) WANT_RUNTIME=native; shift ;;
+    --image) NP_IMAGE=$2; shift 2 ;;
+    --out) OUT_DIR=$2; RESULTS_ROOT=$(dirname "$2"); shift 2 ;;
+    --serve) SERVE=1; shift ;;
+    --port) PORT=$2; shift 2 ;;
+    --bind) BIND=$2; shift 2 ;;
+    --trust-bind) TRUST_BIND=--trust-bind; shift ;;
+    --results) RESULTS_ROOT=$2; shift 2 ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+  esac
+done
+export NP_BUNDLE
+
+ALL_EXPERIMENTS="preflight memory throughput ramp scan correct soak db"
+DEFAULT_EXPERIMENTS="preflight memory throughput ramp scan correct soak"
+
+case $cmd in
+  list)
+    python3 - "$SCRIPTS/np_config.py" <<'PY'
+import json, subprocess, sys
+schema = json.loads(subprocess.check_output([sys.executable, sys.argv[1], "schema"]))
+for e in schema["experiments"]:
+    print(f"{e['id']:<11} {e['blurb']}")
+    for p in e["params"]:
+        d, c = p["default"], p.get("check", p["default"])
+        unit = " " + p["unit"] if p.get("unit") else ""
+        chk = "" if c == d else f"   (check: {c!r})"
+        print(f"    --set {e['id']}.{p['key']}=<{p['type']}>   {p['label']}, default {d!r}{unit}{chk}")
+print("global      --cores N (pinned cores per machine, two machines)")
+PY
+    exit 0 ;;
+  serve)
+    exec python3 "$ROOT/np-benchmarks/dashboard/serve.py" --root "$ROOT" --results "$RESULTS_ROOT" --port "$PORT" --bind "$BIND" $TRUST_BIND ;;
+  check) MODE=check ;;
+  run)   MODE=run ;;
+  *)     usage; exit 0 ;;
+esac
+
+# --- settings ----------------------------------------------------------------------------------
+
+declare -a CFG_ARGS=(--mode "$MODE")
+[ -n "$CONFIG" ] && CFG_ARGS+=(--config "$CONFIG")
+for s in "${SETS[@]+"${SETS[@]}"}"; do CFG_ARGS+=(--set "$s"); done
+SETTINGS_ENV=$(python3 "$SCRIPTS/np_config.py" env "${CFG_ARGS[@]}") || exit 2
+eval "$SETTINGS_ENV"
+SETTINGS_JSON=$(python3 "$SCRIPTS/np_config.py" resolve "${CFG_ARGS[@]}") || exit 2
+
+TWO_HOSTS=0
+{ [ "$SERVER" != local ] || [ "$CLIENT" != local ]; } && TWO_HOSTS=1
+[ "$TWO_HOSTS" = 1 ] && CORES=${CORES:-$NP_CORES}
+export CORES
+export QUIET_IDLE=$NP_QUIET_IDLE
+# Remote hosts run the benchmark image in a container unless told otherwise; this machine runs natively
+# (np-benchmarks/bench.sh puts the whole of np-bench in a container instead).
+RUNTIME=${WANT_RUNTIME:-$([ "$TWO_HOSTS" = 1 ] && echo docker || echo native)}
+case $RUNTIME in docker|native) ;; *) echo "--runtime is docker or native" >&2; exit 2 ;; esac
+export NP_RUNTIME=$RUNTIME NP_IMAGE
+
+if [ -n "$ONLY" ]; then EXPERIMENTS=$(echo "$ONLY" | tr ',' ' ')
+elif [ "$WITH_DB" = 1 ]; then EXPERIMENTS="$DEFAULT_EXPERIMENTS db"
+else EXPERIMENTS=$DEFAULT_EXPERIMENTS; fi
+for e in $EXPERIMENTS; do
+  case " $ALL_EXPERIMENTS " in *" $e "*) ;; *) echo "unknown experiment $e (np-bench list)" >&2; exit 2 ;; esac
+done
+
+OUT_DIR=${OUT_DIR:-$RESULTS_ROOT/$(date +%Y%m%d-%H%M%S)-$MODE}
+mkdir -p "$OUT_DIR"
+OUT_DIR=$(cd "$OUT_DIR" && pwd)
+EVENTS=$OUT_DIR/events.jsonl
+: > "$EVENTS"
+export NP_EVENTS=1 NP_OUT_DIR=$OUT_DIR
+
+ev() { # type [json object of fields]
+  python3 -c 'import json, sys, time
+d = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
+d.update({"t": int(time.time() * 1000), "type": sys.argv[1]})
+print(json.dumps(d))' "$1" "${2:-{\}}" >> "$EVENTS"
+}
+
+declare -a RESULT_NAMES=() RESULT_CODES=()
+record() { RESULT_NAMES+=("$1"); RESULT_CODES+=("$2"); }
+
+# Runs an experiment: its NPEV lines (from the load generator, samplers and scanners, locally or over
+# ssh) go to events.jsonl, everything else to the log and the terminal.
+step() { # name
+  local name=$1 rc=0
+  echo; echo "=== $name"
+  ev exp "{\"exp\":\"$name\",\"state\":\"start\"}"
+  "exp_$name" 2>&1 | awk -v ev="$EVENTS" '/^NPEV /{ print substr($0, 6) >> ev; fflush(ev); next } { print; fflush() }' | tee "$OUT_DIR/$name.log"
+  rc=${PIPESTATUS[0]}
+  ev exp "{\"exp\":\"$name\",\"state\":\"end\",\"rc\":$rc}"
+  record "$name" "$rc"
+  [ "$rc" = 0 ] && echo "--- $name: PASS" || echo "--- $name: FAIL ($rc), see $OUT_DIR/$name.log"
+  python3 "$SCRIPTS/np_report.py" "$OUT_DIR" >/dev/null 2>&1 || true   # keep results.json current
+}
+
+hostopts() { # the machine options the experiment scripts take
+  [ "$TWO_HOSTS" = 1 ] && printf '%s\n' --server "$SERVER" --client "$CLIENT" --server-ip "$SERVER_IP" --cores "$CORES"
+}
+
+# --- preflight ---------------------------------------------------------------------------------
+
+exp_preflight() {
+  local rc=0 h
+  for h in $(printf '%s\n' "$SERVER" "$CLIENT" | sort -u); do
+    echo "- $h"
+    if [ "$RUNTIME" = docker ]; then
+      command -v docker >/dev/null 2>&1 || { echo "  Docker is needed on this machine (it sends the image and drives the hosts)"; rc=1; continue; }
+      [ "$h" != local ] && ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" true 2>/dev/null && { echo "  cannot reach $h over ssh (BatchMode: key login required)"; rc=1; continue; }
+      ensure_node "$h" || { echo "  could not start the container on $h (is Docker running there, and does this user reach it? np-bench setup $h checks)"; rc=1; continue; }
+    elif ! on "$h" 'true' 2>/dev/null && [ "$h" != local ]; then echo "  cannot reach $h over ssh (BatchMode: key login required)"; rc=1; continue; fi
+    on "$h" 'java -version 2>&1 | head -1; echo "$(uname -sm), $(nproc 2>/dev/null || sysctl -n hw.ncpu) cores"' || rc=1
+    on "$h" 'v=$(java -version 2>&1 | sed -nE "s/.*version \"([0-9]+).*/\1/p" | head -1)
+      [ "${v:-0}" -ge 22 ] || { echo "  needs JDK 22 or newer (np-bench setup HOST installs one on Ubuntu)"; exit 1; }' || rc=1
+    if [ "$RUNTIME" = native ] && [ "$h" != local ] && [ -z "$NP_BUNDLE" ] && prebuilt; then
+      local mine theirs
+      mine=$(uname -sm); theirs=$(on "$h" 'uname -sm')
+      [ "$mine" = "$theirs" ] || { echo "  $h is $theirs but this bundle is $mine: pass --bundle <bundle for $theirs>"; rc=1; }
+    fi
+  done
+  if [ "$TWO_HOSTS" = 0 ] && [ "$RUNTIME" = native ]; then
+    prebuilt || command -v cargo >/dev/null || { echo "no prebuilt bundle and no cargo: use a release bundle or install Rust"; rc=1; }
+    local lib=$ROOT/target/release/libnativepath
+    if ! prebuilt && [ ! -f "$lib.dylib" ] && [ ! -f "$lib.so" ]; then
+      echo "- building the native library and the Java modules"
+      (cd "$ROOT" && cargo build -q --release -p np-ffi && cargo build -q --release -p np-http-server --examples) || rc=1
+      (cd "$ROOT" && mvn -B -q -DskipTests compile && fetch_tcnative) || rc=1
+    fi
+  fi
+  if [ "$TWO_HOSTS" = 1 ] && [ "$SERVER_IP" = 127.0.0.1 ]; then echo "--server-ip is needed with remote hosts"; rc=1; fi
+  describe_hosts
+  np_event machine "\"text\":\"$(describe_hosts | python3 -c 'import sys; print(sys.stdin.read().replace(chr(92), "").replace(chr(34), chr(39)).replace(chr(10), " | "))')\""
+  return $rc
+}
+
+# --- memory proofs (one-shot) ------------------------------------------------------------------
+
+MEMORY_SCRIPT='
+CP=$(bench_classpath "$PWD")
+out=$(mktemp)
+status=0
+scan() { # class scenario
+  echo "== $2 ($1)"
+  local ok=true
+  java --enable-native-access=ALL-UNNAMED -cp "$CP" "ro.bitboy.nativepath.benchmarks.$1" "$2" > "$out" 2>&1 || { ok=false; status=1; }
+  grep -v WARNING "$out" || true
+  np_event scan "\"exp\":\"memory\",\"scenario\":\"$2\",\"suite\":\"$1\",\"ok\":$ok"
+}
+for s in control secure; do scan ServerResidueScanTest $s; done
+for s in heap-control native-only pooled-big secret-stream spring-secret guards; do scan ResidueScanTest $s; done
+rm -f "$out"
+exit $status'
+
+build_server_host() { [ "$TWO_HOSTS" = 1 ] || [ "$RUNTIME" = docker ] || return 0; prepare_server; }
+
+exp_memory() {
+  build_server_host || return 1
+  on "$SERVER" "NP_EVENTS=1; $MEMORY_SCRIPT"
+}
+
+# --- throughput --------------------------------------------------------------------------------
+
+# Fails when a measurement produced no requests, reported errors or mismatches: it measured nothing.
+validate_results() { # jsonl...
+  python3 - "$TWO_HOSTS" "$@" <<'PY'
+import json, sys
+bad = 0
+# One machine, macOS: many new connections per second exhaust the client ports (TIME_WAIT), so the
+# 16-connection handshake scenario measures port reuse, not TLS. A known platform limit, not a failure.
+known = sys.platform == "darwin" and sys.argv[1] == "0"
+for path in sys.argv[2:]:
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        res = r.get("result") or {}
+        if known and r.get("scenario") == "handshake_c16":
+            print("note: %s handshake_c16 skipped on one macOS machine (client ports); use Linux" % r.get("config"))
+            continue
+        if res.get("requests", 1) == 0 or res.get("errors", 0) > 0 or res.get("mismatches", 0) > 0:
+            bad += 1
+            print("BAD RESULT: %s %s round %s: requests=%s errors=%s mismatches=%s" % (
+                r.get("config"), r.get("scenario"), r.get("round"), res.get("requests"), res.get("errors"), res.get("mismatches")))
+if bad:
+    print("%d measurement(s) produced no requests, errors or mismatches; see the log above (on macOS the "
+          "many-connection handshake scenarios run out of client ports: use Linux)" % bad)
+sys.exit(1 if bad else 0)
+PY
+}
+
+exp_throughput() {
+  export ROUNDS=$NP_THROUGHPUT_ROUNDS SECONDS_PER_RUN=$NP_THROUGHPUT_SECONDS
+  if [ "$TWO_HOSTS" = 1 ]; then
+    CONFIGS=${NP_THROUGHPUT_CONFIGS:-} "$ROOT/np-benchmarks/remote/two_hosts.sh" --server "$SERVER" --client "$CLIENT" --server-ip "$SERVER_IP" \
+        --cores "$CORES" --rounds "$ROUNDS" --seconds "$SECONDS_PER_RUN" "$OUT_DIR/throughput" || return 1
+    validate_results "$OUT_DIR/throughput/two_hosts.jsonl"
+  else
+    local rc=0
+    "$ROOT/np-benchmarks/scripts/server_layers.sh" "$OUT_DIR/layers" || rc=1
+    "$ROOT/np-benchmarks/scripts/server_tls.sh" "$OUT_DIR/tls" || rc=1
+    for f in layers/layers tls/tls; do
+      [ -f "$OUT_DIR/$f.jsonl" ] && python3 "$ROOT/np-benchmarks/scripts/server_layers_table.py" "$OUT_DIR/$f.jsonl" | tee "$OUT_DIR/$f.table.txt"
+    done
+    validate_results "$OUT_DIR/layers/layers.jsonl" "$OUT_DIR/tls/tls.jsonl" || rc=1
+    return $rc
+  fi
+}
+
+# --- the other experiments: one script each, the same machine options ---------------------------
+
+exp_ramp() {
+  SECONDS_PER_RUN=$NP_RAMP_SECONDS RAMP_STEPS=$NP_RAMP_STEPS RAMP_CONNECTIONS=$NP_RAMP_CONNECTIONS RAMP_CONFIGS=$NP_RAMP_CONFIGS \
+    "$SCRIPTS/server_ramp.sh" $(hostopts) "$OUT_DIR/ramp"
+}
+exp_soak()    { "$SCRIPTS/soak.sh" $(hostopts) "$OUT_DIR/soak"; }
+exp_scan()    { "$SCRIPTS/scan_load.sh" $(hostopts) "$OUT_DIR/scan"; }
+exp_correct() { "$SCRIPTS/correct.sh" $(hostopts) "$OUT_DIR/correct"; }
+exp_db()      { "$SCRIPTS/db_load.sh" "$OUT_DIR/db"; }
+
+# --- run ---------------------------------------------------------------------------------------
+
+COMMIT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || cat "$ROOT/VERSION" 2>/dev/null || echo unknown)
+python3 - "$SETTINGS_JSON" "$MODE" "$EXPERIMENTS" "$SERVER" "$CLIENT" "$SERVER_IP" "${CORES:-}" "$COMMIT" "$OUT_DIR" <<'PY' > "$OUT_DIR/run.json"
+import json, sys, time
+settings, mode, exps, server, client, ip, cores, commit, out = sys.argv[1:10]
+print(json.dumps({"id": out.rstrip("/").split("/")[-1], "mode": mode, "experiments": exps.split(), "settings": json.loads(settings),
+                  "hosts": {"server": server, "client": client, "server_ip": ip, "cores": cores or None},
+                  "commit": commit, "started": int(time.time() * 1000)}, indent=1))
+PY
+ev run "$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' "$OUT_DIR/run.json")"
+
+if [ "$SERVE" = 1 ]; then
+  python3 "$ROOT/np-benchmarks/dashboard/serve.py" --root "$ROOT" --results "$RESULTS_ROOT" --port "$PORT" --bind "$BIND" --follow "$(basename "$OUT_DIR")" &
+  SERVE_PID=$!
+  sleep 1
+fi
+trap '[ -n "${SERVE_PID:-}" ] && kill $SERVE_PID 2>/dev/null; cleanup_nodes' EXIT
+
+echo "np-bench $cmd: $EXPERIMENTS  (results in $OUT_DIR)"
+for e in $EXPERIMENTS; do
+  step "$e"
+  # nothing is worth measuring on a machine that failed its own preflight
+  if [ "$e" = preflight ] && [ "${RESULT_CODES[0]}" != 0 ]; then break; fi
+done
+
+ok=true; for c in "${RESULT_CODES[@]}"; do [ "$c" = 0 ] || ok=false; done
+ev run_end "{\"ok\":$ok}"
+python3 "$SCRIPTS/np_report.py" "$OUT_DIR" >/dev/null 2>&1 || true
+
+echo; echo "=== summary ($OUT_DIR)"
+fail=0
+for i in "${!RESULT_NAMES[@]}"; do
+  if [ "${RESULT_CODES[$i]}" = 0 ]; then echo "PASS  ${RESULT_NAMES[$i]}"; else echo "FAIL  ${RESULT_NAMES[$i]}"; fail=1; fi
+done | tee "$OUT_DIR/summary.txt"
+for c in "${RESULT_CODES[@]}"; do [ "$c" = 0 ] || fail=1; done
+[ "$cmd" = check ] && { [ "$fail" = 0 ] && echo "check passed: run 'np-bench run' for the real experiment" || echo "check failed: fix the failures above before 'np-bench run'"; }
+if [ "$SERVE" = 1 ]; then echo "dashboard still served on port $PORT: Ctrl-C to stop"; wait "$SERVE_PID"; fi
+exit $fail

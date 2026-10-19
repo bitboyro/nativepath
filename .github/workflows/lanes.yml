@@ -1,0 +1,117 @@
+name: Lane A/B and load ramp
+
+# The lane machinery against a base commit (A/B), and optionally each server's load ramp.
+#
+# short (about 10 minutes, half of it building the base commit): the base commit against this
+#   one for the engine and for Spring, defaults and BATCH=4 + SPIN=1, 2 rounds of 5 s, no ramp.
+#   A smoke check that a change is not a regression, not a release measurement.
+# full (about 40 minutes): every lane setting, 3 rounds of 8 s, plus the load ramp. Release
+#   measurements belong on two clean machines (np-benchmarks/remote/); this mode is for when none
+#   are at hand.
+#
+# Started by hand (`gh workflow run lanes.yml -f mode=short --ref <branch>`, once this file is on
+# the default branch), or, short only, by a push to a perf/* branch whose commit message contains
+# [ab] (a workflow that exists only on a branch cannot be started by hand).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: short (smoke A/B, ~10 min) or full (all settings and the ramp, ~40 min)
+        default: short
+      base:
+        description: Base commit or ref to compare against
+        default: origin/main
+  push:
+    branches: ['perf/**']
+
+jobs:
+  lanes:
+    name: Lane A/B and load ramp (Linux)
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[ab]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      MODE: ${{ inputs.mode || 'short' }}
+      AB_BASE: ${{ inputs.base || 'origin/main' }}
+      QUIET_IDLE: '80'
+      QUIET_MAX_WAIT_S: '300'
+      OUT: lanes-results
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the base commit
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '23'
+          cache: maven
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: |
+          cargo build --release -p np-ffi
+          cargo build --release -p np-http-server --examples
+          mvn -B -q -DskipTests compile
+
+      - name: Record the machine
+        run: |
+          mkdir -p "$OUT"
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "date: $(date -u +%FT%TZ)"
+            echo "runner: $RUNNER_NAME ($RUNNER_OS, $RUNNER_ARCH)"
+            echo "cores: $(nproc)"
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz' || true
+            echo "java: $(java -version 2>&1 | head -1)"
+            echo "rustc: $(rustc --version)"
+          } | tee "$OUT/machine.txt"
+
+      - name: A/B (base commit against this one, and the lane settings)
+        run: |
+          set -o pipefail
+          if [ "$MODE" = full ]; then
+            export ROUNDS=3 SECONDS_PER_RUN=8
+          else
+            export ROUNDS=2 SECONDS_PER_RUN=5 \
+              AB_CONFIGS="engine@base engine engine_batch4_spin1 spring@base spring spring_batch4_spin1"
+          fi
+          np-benchmarks/scripts/ab_lanes.sh "$OUT/ab" 2>&1 | tee "$OUT/ab.log"
+        continue-on-error: true
+
+      - name: Load ramp (open loop)
+        if: env.MODE == 'full'
+        env:
+          SECONDS_PER_RUN: '8'
+        run: |
+          set -o pipefail
+          np-benchmarks/scripts/server_ramp.sh "$OUT/ramp" 2>&1 | tee "$OUT/ramp.log"
+        continue-on-error: true
+
+      - name: Tables and summary
+        if: always()
+        run: |
+          set +e +o pipefail
+          [ -f "$OUT/ab/ab.jsonl" ] && python3 np-benchmarks/scripts/server_layers_table.py "$OUT/ab/ab.jsonl" > "$OUT/ab/ab.table.txt"
+          [ -f "$OUT/ramp/ramp.jsonl" ] && python3 np-benchmarks/scripts/server_ramp_table.py "$OUT/ramp/ramp.jsonl" > "$OUT/ramp/ramp.table.txt"
+          {
+            echo "## Lane A/B ($MODE) $(date -u +%F)"
+            echo '```'; cat "$OUT/machine.txt"; cat "$OUT/ab/refs.txt"; echo '```'
+            for f in ab/ab ramp/ramp; do
+              [ -f "$OUT/$f.table.txt" ] || continue
+              echo "### $f"; echo '```'; cat "$OUT/$f.table.txt"; echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanes-results-${{ github.run_number }}
+          path: |
+            lanes-results/
+            !lanes-results/ab/base-src/

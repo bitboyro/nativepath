@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "np-memory",
+    "np-http-client",
+    "np-http-server",
+    "np-ffi",
+    "np-db-postgres",
+]
+resolver = "2"
+
+[profile.dev]
+debug = false
+strip = true
+opt-level = 1

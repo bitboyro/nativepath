@@ -1,0 +1,42 @@
+# Target directories
+target/
+**/target/
+
+# Java / Maven
+*.class
+*.jar
+*.war
+*.ear
+*.hprof
+hs_err_pid*
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# Rust / Cargo
+**/*.rs.bk
+*.pdb
+
+# IDE & OS
+.DS_Store
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+__pycache__/
+# two_hosts.sh dry runs in this checkout
+bench-cert.pem
+bench-key.pem
+bench.cp
+server.log
+
+# np-bench output and release staging
+np-results/
+dist/
+
+# logs the experiment scripts leave next to the tree
+/*.log
+
+# per-user agent settings
+.claude/settings.local.json
