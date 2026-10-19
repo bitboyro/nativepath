@@ -379,6 +379,7 @@ class Report:
             elif exp in ("memory", "scan"): body = self.scans(exp)
             elif exp == "correct": body = self.correct()
             elif exp == "client": body = self.throughput("client")
+            elif exp == "lanes": body = self.throughput("lanes")
             elif exp == "capacity": body = self.capacity()
             elif exp == "soak": body = self.soak()
             elif exp == "db": body = self.db()

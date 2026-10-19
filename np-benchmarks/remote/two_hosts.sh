@@ -36,6 +36,7 @@ OUT_DIR=${1:?out-dir}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 . "$ROOT/np-benchmarks/remote/hosts.sh"   # on, sync_tree, tree_dir (and lib.sh)
 mkdir -p "$OUT_DIR"
+EXP=${NP_EXP:-throughput}   # the experiment these measurements belong to
 OUT=$OUT_DIR/two_hosts.jsonl
 : > "$OUT"
 SDIR=$(tree_dir "$SERVER")
@@ -66,18 +67,30 @@ measure() { # config round pid scheme port scenario path conns new_conn [body]
   local s0 s1 before after line
   s0=$(stats "$4" "$5")
   before=$(on "$SERVER" "cpu_s $3")
-  line=$(on "$CLIENT" "LOADGEN_CA=bench-cert.pem LOADGEN_NEW_CONN=$9 LOADGEN_EVENTS=${NP_EVENTS:+-} LOADGEN_TAG='\"exp\":\"throughput\",\"config\":\"$1\",\"round\":$2,\"scenario\":\"$6\"' pinned $CORES $LG $4://$SERVER_IP:$5$7 $8 $SECONDS_PER_RUN ${10:-}")
+  line=$(on "$CLIENT" "LOADGEN_CA=bench-cert.pem LOADGEN_NEW_CONN=$9 LOADGEN_EVENTS=${NP_EVENTS:+-} LOADGEN_TAG='\"exp\":\"$EXP\",\"config\":\"$1\",\"round\":$2,\"scenario\":\"$6\"' pinned $CORES $LG $4://$SERVER_IP:$5$7 $8 $SECONDS_PER_RUN ${10:-}")
   after=$(on "$SERVER" "cpu_s $3")
   s1=$(stats "$4" "$5")
-  local m="{\"exp\":\"throughput\",\"config\":\"$1\",\"round\":$2,\"scenario\":\"$6\",\"connections\":$8,\"server_cpu_s\":$(minus "$after" "$before"),\"stats_before\":$s0,\"stats_after\":$s1,\"result\":$line}"
+  local m="{\"exp\":\"$EXP\",\"config\":\"$1\",\"round\":$2,\"scenario\":\"$6\",\"connections\":$8,\"server_cpu_s\":$(minus "$after" "$before"),\"stats_before\":$s0,\"stats_after\":$s1,\"result\":$line}"
   echo "$m" | tee -a "$OUT"
   np_measurement "$m"
 }
 
 run_config() { # name round
-  local name=$1 round=$2 server scheme tls="" port=$PORT extra_cp="" cmd=""
+  local name=$1 round=$2 server scheme tls="" port=$PORT extra_cp="" cmd="" tune_env="" base=$1 t
+  # "engine+batch4+spin1": a configuration with lane settings (batch<N>, spin<N>, steal).
+  if [ "${name#*+}" != "$name" ]; then
+    base=${name%%+*}
+    for t in $(echo "${name#*+}" | tr '+' ' '); do
+      case $t in
+        batch*) tune_env="$tune_env NATIVEPATH_SERVER_BATCH=${t#batch}" ;;
+        spin*) tune_env="$tune_env NATIVEPATH_SERVER_SPIN=${t#spin}" ;;
+        steal) tune_env="$tune_env NATIVEPATH_SERVER_WORK_STEALING=true" ;;
+        *) echo "unknown lane setting $t in $name" >&2; exit 1 ;;
+      esac
+    done
+  fi
   local jvm="java --enable-native-access=ALL-UNNAMED -Xms512m -Xmx512m -cp \$cp ro.bitboy.nativepath.benchmarks"
-  case $name in
+  case $base in
     engine)            scheme=http; cmd="../target/release/examples/engine_bench $port" ;;
     engine_java)       scheme=http; cmd="$jvm.RawServerBench $port" ;;
     raw_netty)         scheme=http; cmd="$jvm.RawNettyServer $port" ;;
@@ -94,18 +107,25 @@ run_config() { # name round
   # exec_pinned replaces the shell, so $! is the JVM itself (its CPU time is what we read).
   pid=$(on "$SERVER" "cd np-benchmarks
 cp=\$(cat ../bench.cp)$extra_cp
-BENCH_BIND=0.0.0.0 BENCH_CERT=\$PWD/../bench-cert.pem BENCH_KEY=\$PWD/../bench-key.pem \\
+$tune_env BENCH_BIND=0.0.0.0 BENCH_CERT=\$PWD/../bench-cert.pem BENCH_KEY=\$PWD/../bench-key.pem \\
   nohup bash -c \". scripts/lib.sh; exec_pinned $CORES $cmd\" < /dev/null > ../server.log 2>&1 &
 echo \$!")
+  up=0
   for _ in $(seq 1 160); do
-    on "$CLIENT" "curl -sf --cacert bench-cert.pem -o /dev/null $scheme://$SERVER_IP:$port/hello" 2>/dev/null && break
+    on "$CLIENT" "curl -sf --cacert bench-cert.pem -o /dev/null $scheme://$SERVER_IP:$port/hello" 2>/dev/null && { up=1; break; }
     sleep 0.25
   done
+  [ "$up" = 1 ] || { echo "$name: the client cannot reach $scheme://$SERVER_IP:$port/hello (server log: np-benchmarks/../server.log on the server host)" >&2; exit 1; }
   on "$CLIENT" "LOADGEN_CA=bench-cert.pem pinned $CORES $LG $scheme://$SERVER_IP:$port/hello 64 $WARMUP_S" > /dev/null   # warm-up
   measure "$name" "$round" "$pid" $scheme $port hello_c16 /hello 16 0
   measure "$name" "$round" "$pid" $scheme $port hello_c64 /hello 64 0
+  if [ "${HELLO_ONLY:-0}" = 1 ]; then   # the lanes experiment: only what the lane settings change
+    measure "$name" "$round" "$pid" $scheme $port hello_c256 /hello 256 0
+    on "$SERVER" "kill $pid; for _ in \$(seq 1 40); do kill -0 $pid 2>/dev/null || break; sleep 0.25; done; kill -9 $pid 2>/dev/null || true"
+    return 0
+  fi
   # The Rust-only engine answers /hello alone; the raw Java servers echo /json instead of parsing it.
-  if [ $name != engine ]; then
+  if [ $base != engine ]; then
     measure "$name" "$round" "$pid" $scheme $port payload64k_c16 "/payload?size=65536" 16 0
     measure "$name" "$round" "$pid" $scheme $port json_c16 /json 16 0 @np-benchmarks/scripts/order.json
   fi

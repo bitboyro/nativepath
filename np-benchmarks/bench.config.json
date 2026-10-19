@@ -72,6 +72,14 @@
       ]
     },
     {
+      "id": "lanes", "title": "Lane settings", "blurb": "The engine's lane tuning (batch, spin, work stealing) against its defaults, with and without Java workers, at 16, 64 and 256 connections.",
+      "params": [
+        { "key": "rounds", "label": "Rounds", "type": "int", "default": 3, "check": 1, "min": 1, "max": 50, "help": "Odd rounds run configurations in order, even rounds in reverse." },
+        { "key": "seconds", "label": "Seconds per measurement", "type": "int", "default": 8, "check": 2, "min": 1, "max": 3600, "unit": "s" },
+        { "key": "configs", "label": "Configurations", "type": "text", "default": "engine engine+batch4 engine+spin1 engine+steal engine+batch4+spin1 engine_java engine_java+batch4 engine_java+spin1 engine_java+steal engine_java+batch4+spin1", "check": "engine engine+batch4", "help": "A server (engine, engine_java) plus settings joined by +: batch<N>, spin<N>, steal." }
+      ]
+    },
+    {
       "id": "capacity", "title": "Capacity and break", "blurb": "How many virtual users each server sustains on a small fixed box within a latency and error SLA, and what happens past that.",
       "params": [
         { "key": "variants", "label": "Servers", "type": "text", "default": "engine_java raw_netty raw_tomcat spring_nativepath spring_netty", "check": "engine_java raw_netty", "help": "Subset of: engine_java raw_netty raw_tomcat spring_nativepath spring_netty." },

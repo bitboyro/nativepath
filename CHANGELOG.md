@@ -2,6 +2,15 @@
 
 One line per change, newest release first. Features, Fixes, Changes; nothing else.
 
+## 0.1.2
+
+### Features
+- `lanes` experiment: engine lane settings (batch, spin, work stealing) against the defaults; in the default run.
+
+### Fixes
+- `engine_java` benchmark server now binds to `BENCH_BIND`; it was unreachable from another machine.
+- Two-host throughput stops with a message when the client cannot reach the server.
+
 ## 0.1.1
 
 ### Features

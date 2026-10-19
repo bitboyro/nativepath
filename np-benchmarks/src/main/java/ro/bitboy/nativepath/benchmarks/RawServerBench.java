@@ -31,7 +31,9 @@ public class RawServerBench {
         byte[] hello = "hello".getBytes(StandardCharsets.US_ASCII);
         Map<String, List<String>> headers = Map.of("content-type", List.of("text/plain"));
         Map<String, List<String>> json = Map.of("content-type", List.of("application/json"));
-        NativePathHttpServer.Builder builder = NativePathHttpServer.builder().port(port).lanes(lanes)
+        // BENCH_BIND=0.0.0.0 to be reached from another machine, as the other benchmark servers.
+        NativePathHttpServer.Builder builder = NativePathHttpServer.builder()
+                .host(System.getenv().getOrDefault("BENCH_BIND", "127.0.0.1")).port(port).lanes(lanes)
                 .batch(setting("BATCH", 1)).spin(setting("SPIN", 0))
                 .workStealing(Boolean.parseBoolean(System.getenv("NATIVEPATH_SERVER_WORK_STEALING")));
         // The limits must be positive; unset (0) keeps the engine default.

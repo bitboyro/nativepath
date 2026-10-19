@@ -596,6 +596,7 @@ V.db = {
 const META = {
   preflight: { t: 'Preflight', k: 'check', s: 'tools, library, hosts' }, memory: { t: 'Memory proofs', k: 'security proof', s: 'one-shot scans' },
   throughput: { t: 'Throughput and latency', k: 'closed loop', s: 'most each server delivers' }, ramp: { t: 'Stress ramp', k: 'open loop', s: 'finds the knee' },
+  lanes: { t: 'Lane settings', k: 'engine tuning', s: 'batch, spin, work stealing' },
   capacity: { t: 'Capacity and break', k: 'users under an SLA', s: 'then past it' },
   client: { t: 'HTTP clients', k: 'client', s: 'NativePath against the JDK clients' },
   scan: { t: 'Scan under load', k: 'security proof', s: 'plus error paths' }, correct: { t: 'Correctness under load', k: 'verification', s: 'every response checked' },
@@ -608,12 +609,13 @@ const BLURB = {
   ramp: 'Requests are due on a fixed schedule whether or not the server keeps up, and latency counts from when each request was due. The ramp offers a growing share of the peak rate and reports the knee: the highest rate still served in full with p99 under the limit.',
   scan: 'Planted secrets are sent while the server is busy, in ordinary requests and through failure paths, then the server scans its own process for them. The control must be found: a control that finds nothing means the scanner is blind.',
   correct: 'Speed counts for nothing if the answers are wrong. The load generator checks every response against what that route must return: the status, the length and a hash of the body.',
+  lanes: 'The engine\'s lane settings against its defaults: how many requests a worker takes before running I/O (batch), how long it spins before parking (spin) and whether idle workers take requests from busy lanes (work stealing). Closed loop, at three connection counts, with and without Java workers.',
   capacity: 'Virtual users who pause between requests hit one server on a small fixed box. Per server, the run doubles the users until a level breaks the SLA, then narrows down to the most it sustains for a whole level. Past that it overloads the server on purpose and checks that it recovers.',
   client: 'The Java HTTP clients against one server that is not in their process: java.net.http, Spring RestClient on the JDK, RestClient on NativePath and the NativePath client. Same server, same response sizes. CPU and heap per request are the client JVM\'s.',
   soak: 'A steady load for a long time while the server host is sampled. The question is whether resident memory, Java heap and native memory stay flat. Memory scans run at intervals and show as dotted lines.',
   db: 'The same SQL through the same pool, pgjdbc first and then NativePath, per scenario. Throughput, latency and pool use are sampled every second; the one-shot memory scans of the driver run afterwards.'
 };
-const EXP_ORDER = ['preflight', 'memory', 'throughput', 'ramp', 'scan', 'correct', 'client', 'capacity', 'soak', 'db'];
+const EXP_ORDER = ['preflight', 'memory', 'throughput', 'ramp', 'scan', 'correct', 'client', 'lanes', 'capacity', 'soak', 'db'];
 const API = { token: ((document.querySelector('meta[name="np-token"]') || {}).content) || '' };
 async function api(path, body) {
   const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-NP-Token': API.token }, body: JSON.stringify(body) };
@@ -770,6 +772,7 @@ Rv.capacity = c => {
     if (cur && secs.length) chart($('#c1'), { series: [{ name: 'p99', color: 'var(--s2)', values: secs.map(t => t.p99_us), fill: false }, { name: 'p95', color: 'var(--s1)', values: secs.map(t => t.p95_us), fill: false }], n: Math.max(secs.length, 30), height: 130, yfmt: ms, log: true, ymin: 100, ymax: 10000000, unit: 's', label: 'latency' });
   } };
 };
+Rv.lanes = c => Rv.throughput(c);
 Rv.client = c => { cpuLbl = 'Client CPU µs/req'; try { return Rv.throughput(c); } finally { cpuLbl = 'CPU µs/req'; } };
 Rv.throughput = c => {
   const rep = c.rep || {}, rows = rep.table || [], t = c.ticks, last = c.cur;
