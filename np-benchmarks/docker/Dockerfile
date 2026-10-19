@@ -46,9 +46,10 @@ RUN dnf -y install python39 openssl rsync util-linux procps-ng curl iproute whic
 COPY --from=builder /opt/jdk /opt/jdk
 COPY --from=builder /dist/np-*.tar.gz /tmp/bundle.tgz
 RUN mkdir -p /opt/np /work && tar xzf /tmp/bundle.tgz --strip-components=1 -C /opt/np && rm /tmp/bundle.tgz \
-    && chmod 1777 /opt/np /work
+    && chmod 1777 /opt/np /opt/np/target /work
 # The scripts write certificates, class path files and server logs next to the bundle, and as whichever
-# user runs the container: /opt/np and /work are world-writable (sticky).
+# user runs the container: /opt/np, /opt/np/target (the memory scans' helper writes its file there) and
+# /work are world-writable (sticky).
 ENV JAVA_HOME=/opt/jdk PATH=/opt/np:/opt/jdk/bin:$PATH HOME=/tmp NP_IN_CONTAINER=1
 LABEL org.opencontainers.image.title="np-bench" org.opencontainers.image.source="https://github.com/bitboyro/nativepath"
 WORKDIR /work
