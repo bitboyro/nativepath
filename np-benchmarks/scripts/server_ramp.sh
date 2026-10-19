@@ -45,11 +45,15 @@ prepare_client >&2
 describe_hosts | tee "$OUT_DIR/machines.txt"
 
 PORT=18630
+JVM="java --enable-native-access=ALL-UNNAMED -Xms256m -Xmx256m -cp \$cp ro.bitboy.nativepath.benchmarks"
 SPRING="java --enable-native-access=ALL-UNNAMED -Xms256m -Xmx256m -cp \$cp ro.bitboy.nativepath.benchmarks.ServerBenchApp"
 
 start_config() { # name -> prints the server's PID
   case $1 in
     engine)               start_server head "$1.log" "" "../target/release/examples/engine_bench $PORT" ;;
+    engine_java)          start_server head "$1.log" "" "$JVM.RawServerBench $PORT" ;;
+    raw_netty)            start_server head "$1.log" "" "$JVM.RawNettyServer $PORT" ;;
+    raw_tomcat)           start_server head "$1.log" "" "$JVM.RawTomcatServer $PORT" ;;
     spring_nativepath)       start_server head "$1.log" "" "$SPRING nativepath $PORT" ;;
     spring_nativepath_tuned) start_server head "$1.log" "$RAMP_TUNED" "$SPRING nativepath $PORT" ;;
     spring_nativepath_shed)  start_server head "$1.log" "NATIVEPATH_SERVER_MAX_QUEUED=$RAMP_MAX_QUEUED" "$SPRING nativepath $PORT" ;;
@@ -86,7 +90,7 @@ run_config() { # name
   stop_server "$pid"
 }
 
-for c in ${RAMP_CONFIGS:-engine spring_nativepath spring_nativepath_tuned spring_nativepath_shed spring_netty}; do
+for c in ${RAMP_CONFIGS:-engine raw_netty raw_tomcat spring_nativepath spring_nativepath_tuned spring_nativepath_shed spring_netty}; do
   echo "== $c"
   server_quiet
   run_config "$c"

@@ -40,6 +40,20 @@ final class BenchStats {
                     .append(e.respondNanos()).append(',').append(e.replyNanos()).append(',')
                     .append(e.shedRequests()).append(',').append(e.shedConnections()).append(',')
                     .append(e.stolen()).append(']');
+            // Per phase, the non-empty histogram buckets as [bucket, count] pairs (see engineHistograms()).
+            long[][] rows = server.engineHistograms();
+            sb.append(",\"phase_hist\":{");
+            for (int p = 0; p < rows.length; p++) {
+                sb.append(p == 0 ? "" : ",").append('"').append(NativePathHttpServer.PHASES[p]).append("\":[");
+                boolean first = true;
+                for (int i = 0; i < rows[p].length; i++) {
+                    if (rows[p][i] == 0) continue;
+                    sb.append(first ? "" : ",").append('[').append(i).append(',').append(rows[p][i]).append(']');
+                    first = false;
+                }
+                sb.append(']');
+            }
+            sb.append('}');
         }
         return sb.append('}').toString();
     }

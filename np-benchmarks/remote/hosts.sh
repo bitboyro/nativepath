@@ -178,6 +178,8 @@ prepare_server() { # [tree]
 prepare_client() {
   [ "$CLIENT" = "$SERVER" ] && [ "$CLIENT" != local ] || sync_tree "$CLIENT"
   on "$CLIENT" "[ -f .prebuilt ] || cargo build -q --release -p np-http-server --example loadgen"
+  # The Java client experiment runs its JVM here.
+  on "$CLIENT" "[ -f bench.cp ] || bench_classpath \$PWD > bench.cp"
 }
 
 # "exec" or "exec_pinned N": how a started process replaces its shell (so its PID is the server's).
@@ -190,7 +192,7 @@ start_server() { # tree log env-assignments command
   on "$SERVER" "cd np-benchmarks
 cp=\$(cat ../bench.cp)
 export BENCH_BIND=0.0.0.0 $3
-nohup bash -c \". scripts/lib.sh; $(exec_prefix) $4\" < /dev/null > ../$2 2>&1 &
+nohup bash -c \". scripts/lib.sh; ulimit -n 1048576 2>/dev/null || ulimit -n 65536 2>/dev/null; $(exec_prefix) $4\" < /dev/null > ../$2 2>&1 &
 echo \$!" "$1"
 }
 
@@ -223,7 +225,8 @@ loadgen() {
   # With NP_TAG set (by the experiment) and np-bench collecting events, the load generator streams
   # one event per second, tagged, over stderr (ssh forwards it).
   [ -n "${NP_TAG:-}" ] && [ -n "${NP_EVENTS:-}" ] && envs="$envs LOADGEN_EVENTS=- LOADGEN_TAG='$NP_TAG'"
-  on "$CLIENT" "$pin env $envs target/release/examples/loadgen $*"
+  # Thousands of connections need more than the usual 1024 descriptors.
+  on "$CLIENT" "ulimit -n 1048576 2>/dev/null || ulimit -n 65536 2>/dev/null; $pin env $envs target/release/examples/loadgen $*"
 }
 
 server_url() { echo "http://$SERVER_IP:$1"; }

@@ -8,7 +8,7 @@
 #   np-bench list                the experiments and every setting they take
 #
 # Which experiments (default: all but db):
-#   --only a,b       preflight memory throughput ramp scan correct soak db
+#   --only a,b       preflight memory throughput ramp scan correct client capacity soak db
 #   --with-db        add the PostgreSQL experiment (Docker needed on this machine)
 #
 # Settings (every one has a default for `run` and a shorter one for `check`; `np-bench list` shows them):
@@ -92,8 +92,8 @@ while [ $# -gt 0 ]; do
 done
 export NP_BUNDLE
 
-ALL_EXPERIMENTS="preflight memory throughput ramp scan correct soak db"
-DEFAULT_EXPERIMENTS="preflight memory throughput ramp scan correct soak"
+ALL_EXPERIMENTS="preflight memory throughput ramp scan correct client capacity soak db"
+DEFAULT_EXPERIMENTS="preflight memory throughput ramp scan correct client soak"
 
 case $cmd in
   list)
@@ -301,6 +301,8 @@ exp_ramp() {
 exp_soak()    { "$SCRIPTS/soak.sh" $(hostopts) "$OUT_DIR/soak"; }
 exp_scan()    { "$SCRIPTS/scan_load.sh" $(hostopts) "$OUT_DIR/scan"; }
 exp_correct() { "$SCRIPTS/correct.sh" $(hostopts) "$OUT_DIR/correct"; }
+exp_client()  { "$SCRIPTS/client.sh" $(hostopts) "$OUT_DIR/client"; }
+exp_capacity() { "$SCRIPTS/capacity.sh" $(hostopts) "$OUT_DIR/capacity"; }
 exp_db()      { "$SCRIPTS/db_load.sh" "$OUT_DIR/db"; }
 
 # --- run ---------------------------------------------------------------------------------------

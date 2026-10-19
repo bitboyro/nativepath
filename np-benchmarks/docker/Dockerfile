@@ -41,7 +41,7 @@ FROM scratch AS bundle
 COPY --from=builder /dist/ /
 
 FROM ${BASE_IMAGE} AS runtime
-RUN dnf -y install python39 openssl rsync util-linux procps-ng curl iproute which tar gzip hostname openssh-clients \
+RUN dnf -y install python39 openssl rsync util-linux procps-ng perf curl iproute which tar gzip hostname openssh-clients \
     && alternatives --set python3 /usr/bin/python3.9 && dnf clean all
 COPY --from=builder /opt/jdk /opt/jdk
 COPY --from=builder /dist/np-*.tar.gz /tmp/bundle.tgz

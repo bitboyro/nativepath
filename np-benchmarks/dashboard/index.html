@@ -194,6 +194,21 @@ body:not([data-tab="demo"]) .ctl { display: none; }
   .route .bar { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.lane { display: grid; grid-template-columns: minmax(96px, 150px) minmax(0, 1fr); gap: 10px; align-items: center; margin: 6px 0; }
+.lane .nm { font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.lane .track { position: relative; height: 56px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.lane .bar { position: absolute; bottom: 0; border-radius: 3px 3px 0 0; box-shadow: inset 0 0 0 1px var(--panel); min-width: 2px; }
+.lane .bar.p { background: var(--good); } .lane .bar.f { background: var(--crit); } .lane .bar.o { background: var(--warn); }
+.lane .bar.r { background: var(--s1); } .lane .bar.run { background: var(--s1); opacity: .55; animation: lanepulse 1.4s ease-in-out infinite; }
+@keyframes lanepulse { 50% { opacity: .9; } }
+@media (prefers-reduced-motion: reduce) { .lane .bar.run { animation: none; } }
+.lane .flag { position: absolute; top: 4px; transform: translateX(calc(-100% - 6px)); font: 500 12px var(--font-mono); padding: 1px 8px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 999px; white-space: nowrap; }
+.lane .fin { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dashed var(--fg-3); }
+.axis { display: grid; grid-template-columns: minmax(96px, 150px) minmax(0, 1fr); gap: 10px; }
+.axis div { position: relative; height: 20px; font: 11px var(--font-mono); color: var(--fg-3); }
+.axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.axis span:first-child { transform: none; }
 </style>
 
 <div class="app">
@@ -581,6 +596,8 @@ V.db = {
 const META = {
   preflight: { t: 'Preflight', k: 'check', s: 'tools, library, hosts' }, memory: { t: 'Memory proofs', k: 'security proof', s: 'one-shot scans' },
   throughput: { t: 'Throughput and latency', k: 'closed loop', s: 'most each server delivers' }, ramp: { t: 'Stress ramp', k: 'open loop', s: 'finds the knee' },
+  capacity: { t: 'Capacity and break', k: 'users under an SLA', s: 'then past it' },
+  client: { t: 'HTTP clients', k: 'client', s: 'NativePath against the JDK clients' },
   scan: { t: 'Scan under load', k: 'security proof', s: 'plus error paths' }, correct: { t: 'Correctness under load', k: 'verification', s: 'every response checked' },
   soak: { t: 'Soak', k: 'endurance', s: 'memory trend over time' }, db: { t: 'Database under load', k: 'sql', s: 'pgjdbc against NativePath' }
 };
@@ -591,17 +608,19 @@ const BLURB = {
   ramp: 'Requests are due on a fixed schedule whether or not the server keeps up, and latency counts from when each request was due. The ramp offers a growing share of the peak rate and reports the knee: the highest rate still served in full with p99 under the limit.',
   scan: 'Planted secrets are sent while the server is busy, in ordinary requests and through failure paths, then the server scans its own process for them. The control must be found: a control that finds nothing means the scanner is blind.',
   correct: 'Speed counts for nothing if the answers are wrong. The load generator checks every response against what that route must return: the status, the length and a hash of the body.',
+  capacity: 'Virtual users who pause between requests hit one server on a small fixed box. Per server, the run doubles the users until a level breaks the SLA, then narrows down to the most it sustains for a whole level. Past that it overloads the server on purpose and checks that it recovers.',
+  client: 'The Java HTTP clients against one server that is not in their process: java.net.http, Spring RestClient on the JDK, RestClient on NativePath and the NativePath client. Same server, same response sizes. CPU and heap per request are the client JVM\'s.',
   soak: 'A steady load for a long time while the server host is sampled. The question is whether resident memory, Java heap and native memory stay flat. Memory scans run at intervals and show as dotted lines.',
   db: 'The same SQL through the same pool, pgjdbc first and then NativePath, per scenario. Throughput, latency and pool use are sampled every second; the one-shot memory scans of the driver run afterwards.'
 };
-const EXP_ORDER = ['preflight', 'memory', 'throughput', 'ramp', 'scan', 'correct', 'soak', 'db'];
+const EXP_ORDER = ['preflight', 'memory', 'throughput', 'ramp', 'scan', 'correct', 'client', 'capacity', 'soak', 'db'];
 const API = { token: ((document.querySelector('meta[name="np-token"]') || {}).content) || '' };
 async function api(path, body) {
   const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-NP-Token': API.token }, body: JSON.stringify(body) };
   const r = await fetch(path, opt); let j = {}; try { j = await r.json(); } catch (e) { /* not JSON */ }
   if (!r.ok) throw new Error(j.error || r.statusText); return j;
 }
-const S = { served: false, canStart: false, tab: 'demo', runs: [], runId: null, run: null, report: null, from: 0, done: false, announced: false, ticks: {}, samples: {}, cur: {}, expState: {},
+const S = { served: false, canStart: false, tab: 'demo', runs: [], runId: null, run: null, report: null, from: 0, done: false, announced: false, ticks: {}, samples: {}, cur: {}, meas: {}, variants: {}, expState: {},
   sel: null, more: false, schema: null, lastHosts: {}, newMode: 'check', newExps: null, newSet: {}, newHosts: { server: '', client: '', server_ip: '' }, err: '', note: '', hoverUntil: 0, polls: 0, pick: {}, busy: false, fromFile: false, started: 0 };
 
 const verdictChip = v => v === 'pass' ? chip('good', 'passed') : v === 'fail' ? chip('crit', 'failed') : v === 'info' ? chip('warn', 'not judged') : chip('idle', 'no data');
@@ -613,12 +632,14 @@ const num = (v, d = 0) => v == null ? '–' : Number(v).toLocaleString('en-US', 
 const lastOf = a => a && a.length ? a[a.length - 1] : null;
 function setting(exp, key, dflt) { const r = (S.report && S.report.run) || S.run; const v = r && r.settings && r.settings[exp] && r.settings[exp][key]; return v == null ? dflt : v; }
 
-function resetRun() { Object.assign(S, { run: null, report: null, from: 0, done: false, announced: false, ticks: {}, samples: {}, cur: {}, expState: {}, sel: null, err: '', note: '', polls: 0, pick: {}, fromFile: false }); }
+function resetRun() { Object.assign(S, { run: null, report: null, from: 0, done: false, announced: false, ticks: {}, samples: {}, cur: {}, meas: {}, variants: {}, expState: {}, sel: null, err: '', note: '', polls: 0, pick: {}, fromFile: false }); }
 function ingest(ev) {
   const e = ev.exp;
   if (ev.type === 'run') { S.run = ev; S.started = ev.started || ev.t; }
   else if (ev.type === 'exp') { S.expState[e] = { state: ev.state === 'start' ? 'running' : ev.rc === 0 ? 'done' : 'failed', rc: ev.rc }; if (ev.state === 'start') S.sel = null; }
   else if (ev.type === 'tick') { const a = (S.ticks[e] = S.ticks[e] || []); a.push(ev); if (a.length > 1500) a.shift(); S.cur[e] = ev; }
+  else if (ev.type === 'measurement') (S.meas[e] = S.meas[e] || []).push(ev);
+  else if (ev.type === 'variant') (S.variants[e] = S.variants[e] || []).push(ev);
   else if (ev.type === 'sample') { const a = (S.samples[e] = S.samples[e] || []); a.push(ev); if (a.length > 3000) a.shift(); }
   else if (ev.type === 'run_end') S.done = true;
 }
@@ -678,6 +699,78 @@ const relabel = m => { const o = {}; Object.keys(m).forEach(k => { o[lab[k] || k
 const Rv = {};
 Rv.preflight = c => card('c12', 'Machines', '', `<pre style="white-space:pre-wrap;font:12px var(--font-mono);margin:0;color:var(--fg-2)">${esc(((S.report && S.report.machine) || '').replace(/ \| /g, '\n') || 'No machine description recorded.')}</pre>`);
 
+let cpuLbl = 'CPU µs/req';
+/* ---- Capacity and break: the variants against time ---- */
+function capFromEvents(c) {
+  const meas = S.meas.capacity || [], vars = S.variants.capacity || [], ticks = S.ticks.capacity || [];
+  const planned = String(setting('capacity', 'variants', '')).split(/\s+/).filter(Boolean);
+  const configs = {}, order = planned.slice();
+  const get = n => { if (!configs[n]) { configs[n] = { state: 'queued', levels: [], max_users: null, recovered: null }; if (!order.includes(n)) order.push(n); } return configs[n]; };
+  planned.forEach(get);
+  meas.forEach(e => { const v = get(e.config), r = e.result || {}, wall = Math.max(1, (e.t - e.started) / 1000);
+    v.levels.push({ stage: e.stage, users: e.users, started: e.started, ended: e.t, pass: !!e.pass, reason: e.reason || '', p50_us: r.p50_us, p95_us: r.p95_us, p99_us: r.p99_us, err_pct: e.error_pct, rps: r.rps, rss_mb: e.rss_mb, cpu_pct: 100 * (e.server_cpu_s || 0) / wall }); });
+  vars.forEach(e => { const v = get(e.config); if (e.state === 'start') { v.state = 'running'; v.started = e.t; } else { v.state = 'done'; v.ended = e.t; v.recovered = e.recovered == null ? null : e.recovered; v.fin_max = e.max_users; } });
+  order.forEach(n => { const v = configs[n]; v.levels.sort((a, b) => a.started - b.started);
+    const ok = v.levels.filter(l => l.stage === 'search' && l.pass); v.at_max = ok.reduce((a, l) => !a || l.users > a.users ? l : a, null);
+    v.max_users = v.at_max ? v.at_max.users : (v.state === 'done' ? 0 : null);
+    v.first_fail = v.levels.filter(l => l.stage === 'search' && !l.pass).sort((a, b) => a.users - b.users)[0] || null;
+    v.overload = v.levels.filter(l => l.stage === 'overload');
+    const rec = v.levels.find(l => l.stage === 'recover'); if (rec) v.recovered = rec.pass;
+    if (v.state === 'running') { const t = ticks.filter(x => x.config === n); const last = t[t.length - 1];
+      if (last) { const first = t.find(x => x.stage === last.stage && x.users === last.users); v.cur = { stage: last.stage, users: last.users, started: first.t, sec: last.sec, phase: last.phase, rps: last.rps, p99_us: last.p99_us }; } } });
+  const times = []; order.forEach(n => { const v = configs[n]; if (v.started) times.push(v.started); v.levels.forEach(l => times.push(l.started)); });
+  const sl = (S.report && S.report.run || S.run || {}).settings || {};
+  return { order, configs, t0: times.length ? Math.min(...times) : null, t1: null, sla: capSla() };
+}
+function capSla() { const g = (k, d) => Number(setting('capacity', k, d)); return { p95_ms: g('p95_ms', 500), p99_ms: g('p99_ms', 1000), error_pct: g('error_pct', 1), memory_mb: g('memory_mb', 2048), cores: g('server_cores', 1), think: setting('capacity', 'think', '3000-10000'), seconds: g('seconds', 300) }; }
+function niceStep(span) { const steps = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].map(x => x * 1000); return steps.find(x => span / x <= 8) || steps[steps.length - 1]; }
+Rv.capacity = c => {
+  const rep = c.rep, live = c.live, m = (live || !rep || !rep.configs) ? capFromEvents(c) : rep, sla = m.sla || capSla();
+  const names = m.order || [], cf = m.configs || {};
+  const now = Date.now(), t0 = m.t0 || now, t1 = live || !m.t1 ? Math.max(now, t0 + 1000) : m.t1, span = Math.max(1000, t1 - t0);
+  const x = t => (Math.min(100, Math.max(0, (t - t0) / span * 100))).toFixed(3);
+  const maxTried = Math.max(1, ...names.flatMap(n => (cf[n].levels || []).map(l => l.users)), ...names.map(n => cf[n].cur ? cf[n].cur.users : 0));
+  const barClass = l => l.stage === 'recover' ? (l.pass ? 'r' : 'f') : l.stage === 'overload' ? 'o' : (l.pass ? 'p' : 'f');
+  const stageName = { search: 'search', overload: 'overload', recover: 'recovery' };
+  const lanes = names.map(n => { const v = cf[n];
+    const bars = (v.levels || []).map(l => { const h = Math.max(4, l.users / maxTried * 100);
+      return `<i class="bar ${barClass(l)}" style="left:${x(l.started)}%;width:${(x(l.ended) - x(l.started)).toFixed(3)}%;height:${h.toFixed(1)}%" title="${esc(stageName[l.stage] || l.stage)} · ${num(l.users)} users · ${l.pass ? 'passed' : 'failed: ' + esc(l.reason)} · p99 ${ms(l.p99_us)} · ${num(l.rps)} req/s"></i>`; }).join('');
+    const cur = v.cur ? `<i class="bar run" style="left:${x(v.cur.started)}%;width:${Math.max(.3, x(now) - x(v.cur.started)).toFixed(3)}%;height:${Math.max(4, v.cur.users / maxTried * 100).toFixed(1)}%" title="running: ${num(v.cur.users)} users"></i>` : '';
+    const fin = v.state === 'done' && v.ended ? `<i class="fin" style="left:${x(v.ended)}%"></i><span class="flag" style="left:${x(v.ended)}%">${v.max_users ? num(v.max_users) + ' users' : 'none sustained'}</span>` : '';
+    const lbl = v.state === 'queued' ? '<span class="note" style="position:absolute;left:10px;top:18px">waiting</span>' : '';
+    return `<div class="lane"><div class="nm"><span class="sw" style="background:${cfgColor(n)}"></span>${esc(n)}</div><div class="track">${bars}${cur}${fin}${lbl}</div></div>`; }).join('');
+  const step = niceStep(span), ticks = []; for (let t = 0; t <= span; t += step) ticks.push(t);
+  const axis = `<div class="axis"><div></div><div>${ticks.map(t => `<span style="left:${(t / span * 100).toFixed(2)}%">${t === 0 ? 'start' : dur(t)}</span>`).join('')}</div></div>`;
+  const timeline = card('c12', 'The servers over time', live ? 'live' : 'bar height is the users in the level', `<div>${lanes || '<p class="note">No servers yet.</p>'}${axis}</div>` +
+    legend([['passed', 'var(--good)'], ['failed', 'var(--crit)'], ['overload on purpose', 'var(--warn)'], ['recovery', 'var(--s1)'], ['running', 'var(--s1)']]));
+  // Users sustained, compared.
+  const done = names.filter(n => cf[n].max_users != null), best = Math.max(1, ...done.map(n => cf[n].max_users));
+  const cmp = card('c4', 'Users sustained', `${sla.cores} core · ${num(sla.memory_mb)} MB`, done.length ? done.map(n => `<div class="route" style="grid-template-columns:minmax(120px,1.6fr) minmax(0,2fr) 64px"><div>${esc(n)}</div><div class="bar"><i style="width:${(cf[n].max_users / best * 100).toFixed(1)}%;background:${cfgColor(n)}"></i></div><div class="num" style="text-align:right">${num(cf[n].max_users)}</div></div>`).join('') +
+    `<p class="note" style="margin-top:8px">p95 ≤ ${num(sla.p95_ms)} ms, p99 ≤ ${num(sla.p99_ms)} ms, errors under ${num(sla.error_pct)}%, users pause ${esc(sla.think)} ms between requests, ${dur(sla.seconds * 1000)} per level.</p>` : '<p class="note">The first server has not finished yet.</p>');
+  // One card per server.
+  const cards = names.map(n => { const v = cf[n], a = v.at_max;
+    const st = v.state === 'done' ? chip('good', 'finished') : v.state === 'running' ? chip('run', v.cur ? `${num(v.cur.users)} users, ${stageName[v.cur.stage] || v.cur.stage}` : 'starting') : chip('idle', 'queued');
+    const body = v.state === 'queued' ? '<p class="note">Waiting for its turn.</p>' :
+      `<div class="big">${v.max_users == null ? '–' : num(v.max_users)}<small> users</small></div>` +
+      (a ? kv([['req/s', num(a.rps)], ['p95', ms(a.p95_us)], ['p99', ms(a.p99_us)], ['memory', num(a.rss_mb) + ' MB'], ['CPU', num(a.cpu_pct) + '%'], ['errors', num(a.err_pct, 2) + '%']]) : '') +
+      (v.first_fail ? `<p class="note" style="margin-top:8px">${chip('warn', 'first failed')} ${num(v.first_fail.users)} users: ${esc(v.first_fail.reason)}</p>` : '') +
+      (v.state === 'done' && (v.overload || []).length ? `<p class="note" style="margin-top:6px">Overload ${v.overload.map(o => `${num(o.users)} users ${o.pass ? 'held' : 'broke the SLA'}`).join(', ')}; ${v.recovered === true ? chip('good', 'recovered') : v.recovered === false ? chip('crit', 'did not recover') : ''}</p>` : '');
+    return card('c4', `<span class="sw" style="background:${cfgColor(n)}"></span>${esc(n)}`, st, body); }).join('');
+  // Levels of the picked server.
+  const pick = S.pick.cap && cf[S.pick.cap] ? S.pick.cap : (names.find(n => cf[n].state === 'running') || names.find(n => (cf[n].levels || []).length) || names[0]);
+  const tools = names.length > 1 ? `<div class="seg" id="cfgsel">${names.map(n => `<button class="btn" data-c="${esc(n)}" aria-pressed="${n === pick}">${esc(n)}</button>`).join('')}</div>` : '';
+  const cols = [{ h: 'Stage', f: l => esc(stageName[l.stage] || l.stage) }, { h: 'Users', r: 1, f: l => num(l.users) }, { h: 'Result', f: l => l.pass ? chip('good', 'held') : chip('crit', 'failed') + ' <span class="note">' + esc(l.reason) + '</span>' },
+    { h: 'p95', r: 1, f: l => ms(l.p95_us) }, { h: 'p99', r: 1, f: l => ms(l.p99_us) }, { h: 'Errors', r: 1, f: l => l.err_pct == null ? '–' : num(l.err_pct, 2) + '%' }, { h: 'req/s', r: 1, f: l => num(l.rps) }, { h: 'Memory', r: 1, f: l => num(l.rss_mb) + ' MB' }, { h: 'CPU', r: 1, f: l => num(l.cpu_pct) + '%' }];
+  const tbl = card('c12', 'Levels', esc(pick || ''), table(cols, pick ? cf[pick].levels : [], 'Levels appear here as each one finishes.'));
+  // The running level, second by second.
+  const cur = pick && cf[pick].cur, secs = cur ? c.ticks.filter(t => t.config === pick && t.stage === cur.stage && t.users === cur.users) : [];
+  const livec = cur ? card('c12', `Now: ${esc(pick)}, ${num(cur.users)} users`, cur.phase === 'warmup' ? 'users arriving' : 'measuring', '<div id="c1"></div>' + legend([['p99', 'var(--s2)'], ['p95', 'var(--s1)']])) : '';
+  return { tools, html: `<div class="grid">${timeline}${cmp}${cards}${livec}${tbl}</div>`, after() {
+    document.querySelectorAll('#cfgsel .btn').forEach(b => b.onclick = () => { S.pick.cap = b.dataset.c; drawAll(); });
+    if (cur && secs.length) chart($('#c1'), { series: [{ name: 'p99', color: 'var(--s2)', values: secs.map(t => t.p99_us), fill: false }, { name: 'p95', color: 'var(--s1)', values: secs.map(t => t.p95_us), fill: false }], n: Math.max(secs.length, 30), height: 130, yfmt: ms, log: true, ymin: 100, ymax: 10000000, unit: 's', label: 'latency' });
+  } };
+};
+Rv.client = c => { cpuLbl = 'Client CPU µs/req'; try { return Rv.throughput(c); } finally { cpuLbl = 'CPU µs/req'; } };
 Rv.throughput = c => {
   const rep = c.rep || {}, rows = rep.table || [], t = c.ticks, last = c.cur;
   const same = last ? t.filter(x => x.config === last.config && x.scenario === last.scenario && x.round === last.round) : [];
@@ -689,19 +782,27 @@ Rv.throughput = c => {
   let left;
   if (c.live && last) {
     left = card('c4', 'Requests per second', `<span class="sw" style="background:${cfgColor(last.config)}"></span>${esc(last.config)}`, '<div id="g"></div>' + kv([['p50', ms(last.p50_us)], ['p99', ms(last.p99_us)], ['errors', num(last.errors)], ['shed (503)', num(last.shed)]]) +
+      (last.gen_util_pct != null ? kv([['generator busy', num(last.gen_util_pct) + '%']]) + (last.gen_util_pct >= 85 ? `<p class="note">${chip('warn', 'generator-bound')} the load generator is the limit here, not the server.</p>` : '') : '') +
       (S.more ? kv([['p99.9', ms(last.p999_us)], ['slowest', ms(last.max_us)], ['MB/s', num(last.mb_s, 2)], ['connections', num(last.conns)]]) : '') + '<p class="note" style="margin-top:8px">The short bar on the dial marks the best second so far in this run.</p>');
   } else {
     const b = rows.find(r => keyOf(r) === pickKey) || bestRow;
-    left = card('c4', 'Result', verdictChip(rep.verdict), b ? `<div class="big">${num(b.rps_mean)}<small> req/s</small></div><p class="note" style="margin:4px 0 8px"><span class="sw" style="background:${cfgColor(b.config)}"></span>${esc(b.config)} · ${esc(b.scenario)}${b === bestRow ? `, the best of ${rows.length} measurements` : ''}</p>` + kv([['p99', ms(b.p99_us)], ['CPU µs/req', num(b.cpu_us_req, 1)], ['spread', num(b.spread_pct, 1) + '%'], ['errors', num(b.errors)]]) +
+    left = card('c4', 'Result', verdictChip(rep.verdict), b ? `<div class="big">${num(b.rps_mean)}<small> req/s</small></div><p class="note" style="margin:4px 0 8px"><span class="sw" style="background:${cfgColor(b.config)}"></span>${esc(b.config)} · ${esc(b.scenario)}${b === bestRow ? `, the best of ${rows.length} measurements` : ''}</p>` + kv([['p99', ms(b.p99_us)], [cpuLbl, num(b.cpu_us_req, 1)], ['spread', num(b.spread_pct, 1) + '%'], ['errors', num(b.errors)]]) +
+      (b.gen_util_pct != null ? kv([['generator busy', num(b.gen_util_pct) + '%'], ['generator µs/req', num(b.gen_cpu_us_req, 1)]]) + (b.gen_bound ? `<p class="note">${chip('warn', 'generator-bound')} this is the load generator's limit, not the server's.</p>` : '') : '') +
       (S.more ? kv([['p50', ms(b.p50_us)], ['p99.9', ms(b.p999_us)], ['heap B/req', num(b.heap_b_req)], ['MB/s', num(b.mb_s, 2)]]) : '') : '<p class="note">No measurements.</p>');
   }
   const right = card('c8', 'Requests per second', c.live ? 'this run, last 60 s' : esc(pickKey.replace('|', ' · ')), '<div id="c1"></div>' + `<h3 style="margin-top:12px"><span>Latency</span><em>log scale</em></h3><div id="c2"></div>` + legend([['p50', 'var(--s1)'], ['p99', 'var(--s2)']]));
   const cols = [{ h: 'Configuration', f: r => `<span class="sw" style="background:${cfgColor(r.config)}"></span>${esc(r.config)}` }, { h: 'Scenario', f: r => esc(r.scenario) }, { h: 'req/s', r: 1, f: r => num(r.rps_mean) }, { h: 'p99', r: 1, f: r => ms(r.p99_us) },
-    { h: 'CPU µs/req', r: 1, f: r => num(r.cpu_us_req, 1) }, { h: 'Spread', r: 1, f: r => num(r.spread_pct, 0) + '%' }, { h: 'Errors', r: 1, f: r => num(r.errors) }];
+    { h: cpuLbl, r: 1, f: r => num(r.cpu_us_req, 1) }, { h: 'Spread', r: 1, f: r => num(r.spread_pct, 0) + '%' }, { h: 'Errors', r: 1, f: r => num(r.errors) },
+    { h: 'Generator', r: 1, f: r => r.gen_util_pct == null ? '–' : r.gen_bound ? chip('warn', num(r.gen_util_pct) + '% busy') : num(r.gen_util_pct) + '%' }];
   if (S.more) cols.push({ h: 'Rounds', r: 1, f: r => r.rounds }, { h: 'p50', r: 1, f: r => ms(r.p50_us) }, { h: 'p99.9', r: 1, f: r => ms(r.p999_us) }, { h: 'Heap B/req', r: 1, f: r => num(r.heap_b_req) }, { h: 'Shed', r: 1, f: r => num(r.shed) }, { h: 'MB/s', r: 1, f: r => num(r.mb_s, 2) }, { h: 'min–max req/s', r: 1, f: r => num(r.rps_min) + '–' + num(r.rps_max) });
   const tbl = card('c12', 'Finished measurements', (rep.headline ? esc(rep.headline) : '') + (!c.live && rows.length ? ' · click a row to chart it' : ''), table(cols, rows, c.live ? 'Measurements appear here as each one finishes.' : 'No measurements.', c.live ? null : r => ` class="pick${keyOf(r) === pickKey ? ' on' : ''}" data-k="${esc(keyOf(r))}"`));
+  const pb = !c.live && (rows.find(r => keyOf(r) === pickKey) || bestRow), ph = pb && pb.phases ? Object.entries(pb.phases) : [];
+  const phaseC = ph.length ? card('c12', 'Where the time goes inside the engine', esc(pickKey.replace('|', ' · ')) + ' · tails, not means', table([{ h: 'Phase', f: p => ({ read: 'read (head parsed → queued)', queue: 'queue (waiting for the worker)', handler: 'handler (the Java side)', respond: 'respond (copying the answer)', reply: 'reply (answered → written)' })[p[0]] || esc(p[0]) }, { h: 'p50', r: 1, f: p => ms(p[1].p50_us) }, { h: 'p99', r: 1, f: p => ms(p[1].p99_us) }, { h: 'p99.9', r: 1, f: p => ms(p[1].p999_us) }, { h: 'Requests', r: 1, f: p => num(p[1].n) }], ph, '')) : '';
+  const prof = pb && (rep.profiles || {})[pb.config], bars = prof ? prof.categories.map(k => `<div class="route"><div>${esc(k.name)}</div><div class="bar"><i style="width:${k.pct}%"></i></div><div class="num" style="text-align:right">${num(k.pct, 1)}%</div></div>`).join('') : '';
+  const profC = prof ? card('c12', 'Where the CPU goes', esc(pb.config) + ' · perf, ' + prof.seconds + ' s', bars + `<h3 style="margin-top:12px"><span>Hottest symbols</span></h3>` + table([{ h: 'Symbol', f: s => `<code>${esc(s.sym)}</code>` }, { h: 'Share', r: 1, f: s => num(s.pct, 1) + '%' }], prof.top.slice(0, 12), '')) : '';
+  const warnC = (rep.warnings || []).length ? `<div class="banner on" style="grid-column:1/-1">${chip('warn', 'read with care')} ${(rep.warnings || []).map(esc).join(' ')}</div>` : '';
   const moreC = S.more && c.live ? card('c12', 'Every metric the load generator reports', 'this run', sparks(relabel(tickMap(same, ['sec', 'target_rps'])))) : '';
-  return { html: `<div class="grid">${left}${right}${tbl}${moreC}</div>`, after() {
+  return { html: `<div class="grid">${warnC}${left}${right}${tbl}${phaseC}${profC}${moreC}</div>`, after() {
     if (c.live && last) { const mx = niceMax(Math.max(best * 1.3, 1000)); gauge($('#g'), { value: last.rps, max: mx, maxLabel: fk(mx), peak: best, color: cfgColor(last.config), text: fmt(last.rps), label: 'requests per second' }); }
     const col = c.live && last ? cfgColor(last.config) : cfgColor(pickKey);
     const R1 = ser.length ? ser.map(x => x.rps) : rs ? rs.rps : [], P99 = ser.length ? ser.map(x => x.p99_us) : rs ? rs.p99_us : [], P50 = ser.length ? ser.map(x => x.p50_us) : [];
@@ -723,7 +824,7 @@ Rv.ramp = c => {
   const tools = names.length > 1 ? `<div class="seg" id="cfgsel">${names.map(n => `<button class="btn" data-c="${esc(n)}" aria-pressed="${n === pick}">${esc(n)}</button>`).join('')}</div>` : '';
   const left = card('c4', live ? 'Offered load' : 'Knee', `<span class="sw" style="background:${cfgColor(pick || '')}"></span>${esc(pick || '')}`,
     (live ? '<div id="g"></div>' + kv([['served now', num(last.rps)], ['p99 now', ms(last.p99_us)], ['shed (503)', num(last.shed)], ['knee', cf.knee ? fk(cf.knee) + '/s' : '–']]) :
-      `<div class="big">${cf.knee ? num(cf.knee) : '–'}<small> req/s</small></div><p class="note" style="margin:4px 0 8px">${cf.knee ? 'The highest step served in full with p99 under the limit.' : 'Below the lowest step.'}</p>` + kv([['closed-loop peak', num(cf.peak_rps)], ['steps', cf.steps.length]])) +
+      `<div class="big">${cf.knee ? num(cf.knee) : '–'}<small> req/s</small></div><p class="note" style="margin:4px 0 8px">${cf.knee ? 'The highest step served in full with p99 under the limit.' : 'Below the lowest step.'}</p>` + kv([['closed-loop peak', num(cf.peak_rps)], ['steps', cf.steps.length]]) + (cf.gen_bound ? `<p class="note">${chip('warn', 'generator-bound')} the load generator reached ${num(cf.gen_util_pct)}% of its machine; the knee may be the generator's.</p>` : '')) +
     (S.more && live ? kv([['p99.9', ms(last.p999_us)], ['slowest', ms(last.max_us)], ['errors', num(last.errors)], ['connections', num(last.conns)]]) : ''));
   const right = card('c8', 'Offered against served', 'requests per second', '<div id="c1"></div>' + legend([['served', 'var(--s1)'], ['offered', 'var(--s2)']]) + `<h3 style="margin-top:12px"><span>p99 at each step</span><em>limit ${ms(rep.slo_us || 10000)}</em></h3><div id="c2"></div>`);
   const cols = [{ h: 'Step', f: s => Math.round(s.fraction * 100) + '%' }, { h: 'Offered', r: 1, f: s => num(s.offered) }, { h: 'Served', r: 1, f: s => num(s.served) }, { h: 'Served %', r: 1, f: s => num(s.served_pct, 0) + '%' }, { h: 'p99', r: 1, f: s => ms(s.p99_us) },

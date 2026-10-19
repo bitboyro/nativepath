@@ -63,7 +63,7 @@ jobs:
       # the database experiment against a PostgreSQL service. No timing is gated: a shared runner's
       # numbers are not evidence.
       - name: Check
-        run: NP_NO_BUILD=1 np-benchmarks/bench.sh check --only preflight,memory,scan,correct,db --set scan.scenarios="control secure"
+        run: NP_NO_BUILD=1 np-benchmarks/bench.sh check --only preflight,memory,scan,correct,client,capacity,db --set scan.scenarios="control secure" --set capacity.variants=engine_java
 
       - name: Keep the results
         if: always()

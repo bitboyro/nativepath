@@ -75,21 +75,27 @@ measure() { # config round pid scheme port scenario path conns new_conn [body]
 }
 
 run_config() { # name round
-  local name=$1 round=$2 server scheme tls="" port=$PORT extra_cp=""
+  local name=$1 round=$2 server scheme tls="" port=$PORT extra_cp="" cmd=""
+  local jvm="java --enable-native-access=ALL-UNNAMED -Xms512m -Xmx512m -cp \$cp ro.bitboy.nativepath.benchmarks"
   case $name in
+    engine)            scheme=http; cmd="../target/release/examples/engine_bench $port" ;;
+    engine_java)       scheme=http; cmd="$jvm.RawServerBench $port" ;;
+    raw_netty)         scheme=http; cmd="$jvm.RawNettyServer $port" ;;
+    raw_tomcat)        scheme=http; cmd="$jvm.RawTomcatServer $port" ;;
     spring_nativepath)    server=nativepath; scheme=http ;;
     spring_netty)      server=netty;   scheme=http ;;
     np_tls)       server=nativepath; scheme=https; tls=tls ;;
     netty_jdk_tls)     server=netty;   scheme=https; tls=tls ;;
     netty_openssl_tls) server=netty;   scheme=https; tls=tls; extra_cp=":\$(tcnative_cp)" ;;
   esac
+  [ -n "$cmd" ] || cmd="$jvm.ServerBenchApp $server $port $tls"
   local pid
   on "$SERVER" "require_free_port $port" || exit 1
   # exec_pinned replaces the shell, so $! is the JVM itself (its CPU time is what we read).
   pid=$(on "$SERVER" "cd np-benchmarks
 cp=\$(cat ../bench.cp)$extra_cp
 BENCH_BIND=0.0.0.0 BENCH_CERT=\$PWD/../bench-cert.pem BENCH_KEY=\$PWD/../bench-key.pem \\
-  nohup bash -c \". scripts/lib.sh; exec_pinned $CORES java --enable-native-access=ALL-UNNAMED -Xms512m -Xmx512m -cp \$cp ro.bitboy.nativepath.benchmarks.ServerBenchApp $server $port $tls\" < /dev/null > ../server.log 2>&1 &
+  nohup bash -c \". scripts/lib.sh; exec_pinned $CORES $cmd\" < /dev/null > ../server.log 2>&1 &
 echo \$!")
   for _ in $(seq 1 160); do
     on "$CLIENT" "curl -sf --cacert bench-cert.pem -o /dev/null $scheme://$SERVER_IP:$port/hello" 2>/dev/null && break
@@ -98,8 +104,11 @@ echo \$!")
   on "$CLIENT" "LOADGEN_CA=bench-cert.pem pinned $CORES $LG $scheme://$SERVER_IP:$port/hello 64 $WARMUP_S" > /dev/null   # warm-up
   measure "$name" "$round" "$pid" $scheme $port hello_c16 /hello 16 0
   measure "$name" "$round" "$pid" $scheme $port hello_c64 /hello 64 0
-  measure "$name" "$round" "$pid" $scheme $port payload64k_c16 "/payload?size=65536" 16 0
-  measure "$name" "$round" "$pid" $scheme $port json_c16 /json 16 0 @np-benchmarks/scripts/order.json
+  # The Rust-only engine answers /hello alone; the raw Java servers echo /json instead of parsing it.
+  if [ $name != engine ]; then
+    measure "$name" "$round" "$pid" $scheme $port payload64k_c16 "/payload?size=65536" 16 0
+    measure "$name" "$round" "$pid" $scheme $port json_c16 /json 16 0 @np-benchmarks/scripts/order.json
+  fi
   if [ $scheme = https ]; then
     measure "$name" "$round" "$pid" $scheme $port payload512k_c16 "/payload?size=524288" 16 0
     measure "$name" "$round" "$pid" $scheme $port handshake_c1 /hello 1 1
@@ -108,7 +117,7 @@ echo \$!")
   on "$SERVER" "kill $pid; for _ in \$(seq 1 40); do kill -0 $pid 2>/dev/null || break; sleep 0.25; done; kill -9 $pid 2>/dev/null || true"
 }
 
-CONFIGS=${CONFIGS:-"spring_nativepath spring_netty np_tls netty_jdk_tls netty_openssl_tls"}
+CONFIGS=${CONFIGS:-"engine engine_java raw_netty raw_tomcat spring_nativepath spring_netty np_tls netty_jdk_tls netty_openssl_tls"}
 REVERSED=$(reverse $CONFIGS | tr '\n' ' ')
 for round in $(seq 1 "$ROUNDS"); do
   if [ $((round % 2)) = 1 ]; then order=$CONFIGS; else order=$REVERSED; fi

@@ -9,7 +9,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The engine with plain Java workers and no Spring: one worker per lane polls and answers "hello".
+ * The engine with plain Java workers and no Spring: one worker per lane polls and answers "hello"
+ * (and {@code /payload?size=N}, and {@code /echo} and {@code /json} with the request body).
  * Measures what crossing into the JVM costs on top of the engine.
  *
  *   java ... RawServerBench &lt;port&gt; [lanes=0 (one per core)]
@@ -45,6 +46,16 @@ public class RawServerBench {
                         if (ex == null) continue;
                         if (ex.target().equals("/__stats")) {
                             ex.respond(200, json, BenchStats.json(server).getBytes(StandardCharsets.US_ASCII));
+                        } else if (ex.target().startsWith("/payload")) {
+                            int q = ex.target().indexOf("size=");
+                            byte[] body = new byte[q < 0 ? 0 : Integer.parseInt(ex.target().substring(q + 5))];
+                            java.util.Arrays.fill(body, (byte) 'x');
+                            ex.respond(200, headers, body);
+                        } else if (ex.target().startsWith("/echo") || ex.target().startsWith("/json")) {
+                            // The body back, as the other raw servers do (no parsing).
+                            byte[] in = ex.body().equals(java.lang.foreign.MemorySegment.NULL)
+                                    ? new byte[0] : ex.body().toArray(java.lang.foreign.ValueLayout.JAVA_BYTE);
+                            ex.respond(200, ex.target().startsWith("/json") ? json : headers, in);
                         } else {
                             ex.respond(200, headers, hello);
                         }

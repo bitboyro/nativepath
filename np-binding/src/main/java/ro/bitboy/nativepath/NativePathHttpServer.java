@@ -287,6 +287,38 @@ public final class NativePathHttpServer implements AutoCloseable {
                               long respondNanos, long replyNanos, long shedRequests, long shedConnections,
                               long stolen) {}
 
+    /** Phases of {@link #engineHistograms()}, in row order. */
+    public static final String[] PHASES = {"read", "queue", "handler", "respond", "reply"};
+
+    /** Buckets per phase in {@link #engineHistograms()}. */
+    public static final int HIST_BUCKETS = 160;
+
+    /**
+     * How long each engine phase took, as counts since start: one row per {@link #PHASES}, in
+     * log-scale buckets of nanoseconds, four per power of two (bucket {@code i} starts at
+     * {@code i < 4 ? i : (4 + i % 4) << (i / 4 - 1)} ns). Shows the tail that {@link #engineStats()}'s
+     * sums average away.
+     */
+    public long[][] engineHistograms() {
+        lifecycle.readLock().lock();
+        try (Arena arena = Arena.ofConfined()) {
+            long[][] rows = new long[PHASES.length][HIST_BUCKETS];
+            if (destroyed) {
+                return rows;
+            }
+            int n = PHASES.length * HIST_BUCKETS;
+            MemorySegment out = arena.allocate(ValueLayout.JAVA_LONG, n);
+            ForeignBridge.serverPhaseHist(handle, out, n);
+            long[] v = out.toArray(ValueLayout.JAVA_LONG);
+            for (int p = 0; p < PHASES.length; p++) {
+                System.arraycopy(v, p * HIST_BUCKETS, rows[p], 0, HIST_BUCKETS);
+            }
+            return rows;
+        } finally {
+            lifecycle.readLock().unlock();
+        }
+    }
+
     /** Engine timings since start. Always collected (a few clock reads per request). */
     public EngineStats engineStats() {
         lifecycle.readLock().lock();

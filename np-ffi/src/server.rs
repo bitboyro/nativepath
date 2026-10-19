@@ -248,6 +248,29 @@ pub unsafe extern "C" fn np_server_stats(
     )
 }
 
+/// Engine phase histograms: writes up to `n` counts to `out` (5 phases in the order of
+/// `np_server_stats` read, queue, handler, respond, reply; 160 log-scale buckets each, four per
+/// power of two of nanoseconds, flattened) and returns how many it wrote.
+#[no_mangle]
+pub unsafe extern "C" fn np_server_phase_hist(
+    server: *mut NativePathServerHandle,
+    out: *mut u64,
+    n: usize,
+) -> usize {
+    guard(
+        || {
+            let (Some(s), false) = (server.as_ref(), out.is_null()) else {
+                return 0;
+            };
+            let snap = s.inner.stats().hist_snapshot();
+            let k = snap.len().min(n);
+            std::ptr::copy_nonoverlapping(snap.as_ptr(), out, k);
+            k
+        },
+        || 0,
+    )
+}
+
 /// Benchmark hook: a request that did not come from the network (typical browser headers plus
 /// `extra_headers` more, and a body of `body_len` bytes), filled into `out` exactly as
 /// `np_lane_next` would. Answer or free it as usual; the reply goes nowhere.

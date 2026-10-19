@@ -19,7 +19,7 @@
       "params": [
         { "key": "rounds", "label": "Rounds", "type": "int", "default": 3, "check": 1, "min": 1, "max": 50, "help": "Odd rounds run configurations in order, even rounds in reverse." },
         { "key": "seconds", "label": "Seconds per measurement", "type": "int", "default": 10, "check": 2, "min": 1, "max": 3600, "unit": "s" },
-        { "key": "configs", "label": "Configurations", "type": "text", "default": "", "help": "Space-separated subset; empty runs all (spring_nativepath spring_netty np_tls netty_jdk_tls netty_openssl_tls)." }
+        { "key": "configs", "label": "Configurations", "type": "text", "default": "", "help": "Space-separated subset; empty runs all: engine engine_java raw_netty raw_tomcat (plain HTTP baselines, no Spring), spring_nativepath spring_netty (plain HTTP), np_tls netty_jdk_tls netty_openssl_tls (HTTPS)." }
       ]
     },
     {
@@ -28,7 +28,7 @@
         { "key": "seconds", "label": "Seconds per step", "type": "int", "default": 8, "check": 3, "min": 1, "max": 600, "unit": "s" },
         { "key": "steps", "label": "Steps (fractions of peak)", "type": "text", "default": "0.3 0.5 0.7 0.8 0.9 1.0 1.1 1.3", "check": "0.5 1.0 1.3" },
         { "key": "connections", "label": "Connections", "type": "int", "default": 128, "check": 32, "min": 1, "max": 4096, "help": "The listen backlog is 128; more cannot all connect at once." },
-        { "key": "configs", "label": "Configurations", "type": "text", "default": "engine spring_nativepath spring_nativepath_tuned spring_nativepath_shed spring_netty", "check": "spring_nativepath", "help": "Subset of: engine spring_nativepath spring_nativepath_tuned spring_nativepath_shed spring_netty." },
+        { "key": "configs", "label": "Configurations", "type": "text", "default": "engine raw_netty raw_tomcat spring_nativepath spring_nativepath_tuned spring_nativepath_shed spring_netty", "check": "spring_nativepath", "help": "Subset of: engine engine_java raw_netty raw_tomcat spring_nativepath spring_nativepath_tuned spring_nativepath_shed spring_netty." },
         { "key": "slo_ms", "label": "p99 limit", "type": "float", "default": 10, "min": 0.1, "max": 10000, "unit": "ms", "help": "The knee is the highest step served in full with p99 under this limit." }
       ]
     },
@@ -59,6 +59,39 @@
         { "key": "servers", "label": "Servers", "type": "text", "default": "nativepath netty", "check": "nativepath", "help": "nativepath, netty or both." },
         { "key": "tls", "label": "Over TLS", "type": "bool", "default": false },
         { "key": "stop_on_mismatch", "label": "Stop at the first mismatch", "type": "bool", "default": true }
+      ]
+    },
+    {
+      "id": "client", "title": "HTTP clients", "blurb": "The Java HTTP clients against one server: java.net.http, RestClient on the JDK, RestClient on NativePath, the NativePath client. CPU and heap per request are the client JVM's.",
+      "params": [
+        { "key": "seconds", "label": "Seconds per measurement", "type": "int", "default": 10, "check": 2, "min": 1, "max": 3600, "unit": "s" },
+        { "key": "rounds", "label": "Rounds", "type": "int", "default": 3, "check": 1, "min": 1, "max": 50, "help": "Even rounds run the clients in reverse order." },
+        { "key": "clients", "label": "Clients", "type": "text", "default": "jdk rest_jdk rest_nativepath nativepath", "check": "jdk nativepath", "help": "Subset of: jdk rest_jdk rest_nativepath nativepath." },
+        { "key": "sizes", "label": "Response sizes (bytes)", "type": "text", "default": "256 8192 65536 524288", "check": "256 65536" },
+        { "key": "threads", "label": "Client threads", "type": "text", "default": "1 16", "check": "1" }
+      ]
+    },
+    {
+      "id": "capacity", "title": "Capacity and break", "blurb": "How many virtual users each server sustains on a small fixed box within a latency and error SLA, and what happens past that.",
+      "params": [
+        { "key": "variants", "label": "Servers", "type": "text", "default": "engine_java raw_netty raw_tomcat spring_nativepath spring_netty", "check": "engine_java raw_netty", "help": "Subset of: engine_java raw_netty raw_tomcat spring_nativepath spring_netty." },
+        { "key": "seconds", "label": "Seconds per level", "type": "int", "default": 300, "check": 5, "min": 1, "max": 7200, "unit": "s", "help": "A level only counts when it holds for this long, after the users have arrived." },
+        { "key": "start_users", "label": "Users at the first level", "type": "int", "default": 500, "check": 50, "min": 1, "max": 1000000 },
+        { "key": "max_users", "label": "Most users to try", "type": "int", "default": 30000, "check": 200, "min": 1, "max": 1000000 },
+        { "key": "think", "label": "Think time (ms, min-max)", "type": "text", "default": "3000-10000", "check": "200-500", "help": "Each user pauses this long between requests." },
+        { "key": "ramp_s", "label": "Ramp-up (s)", "type": "int", "default": 30, "check": 2, "min": 0, "max": 3600, "unit": "s", "help": "Users arrive over this time." },
+        { "key": "p95_ms", "label": "SLA: p95 (ms)", "type": "int", "default": 500, "min": 1, "max": 60000 },
+        { "key": "p99_ms", "label": "SLA: p99 (ms)", "type": "int", "default": 1000, "min": 1, "max": 60000 },
+        { "key": "error_pct", "label": "SLA: errors below (%)", "type": "int", "default": 1, "min": 1, "max": 100, "help": "503s count as errors." },
+        { "key": "server_cores", "label": "Server cores", "type": "int", "default": 1, "min": 1, "max": 256, "help": "The server is pinned to this many cores." },
+        { "key": "memory_mb", "label": "Server memory limit (MB)", "type": "int", "default": 2048, "min": 64, "max": 1048576, "help": "Checked against the process's resident size at each level; JVM heaps are half of it." },
+        { "key": "max_bisect", "label": "Refinement steps", "type": "int", "default": 4, "check": 1, "min": 0, "max": 20 },
+        { "key": "break", "label": "Break phase", "type": "bool", "default": true, "help": "Past the limit: overload levels, then back to the passing level to see whether the server recovers." },
+        { "key": "break_factors", "label": "Overload factors", "type": "text", "default": "1.5 2", "check": "1.5" },
+        { "key": "break_seconds", "label": "Seconds per overload level", "type": "int", "default": 60, "check": 5, "min": 1, "max": 7200, "unit": "s" },
+        { "key": "recover_seconds", "label": "Seconds to recover", "type": "int", "default": 60, "check": 5, "min": 1, "max": 7200, "unit": "s" },
+        { "key": "max_connections", "label": "NativePath connection limit", "type": "int", "default": 50000, "min": 1, "max": 10000000, "help": "Raised from the default of 10,000 so the limit measured is capacity. Tomcat and Netty keep their own." },
+        { "key": "mix", "label": "Workload mix", "type": "text", "default": "GET /hello 50; GET /payload?size=4096 30; POST /json @np-benchmarks/scripts/order.json 20", "help": "METHOD /path [body bytes or @file] weight; separated by ;" }
       ]
     },
     {

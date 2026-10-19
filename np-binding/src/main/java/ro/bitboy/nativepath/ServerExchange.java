@@ -2,7 +2,6 @@ package ro.bitboy.nativepath;
 
 import ro.bitboy.nativepath.internal.ForeignBridge;
 
-import java.io.ByteArrayOutputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -55,8 +54,11 @@ public final class ServerExchange implements AutoCloseable {
     private final int localPort;
     private final ServerLane lane;
     private final Set<String> secretHeaders;
-    // name\0value\0 pairs, names lower case; owned by this exchange, zeroed when answered.
-    private final MemorySegment headerBlock;
+    // name\0value\0 pairs, names lower case; owned by this exchange and never handed out, so it is
+    // wiped and freed as soon as the exchange is answered or closed (see wipe()); empty after that.
+    private MemorySegment headerBlock;
+    private final long headerAddress;
+    private final long headerCapacity;
     private final MemorySegment body;
     private Map<String, List<String>> headerMap;
 
@@ -75,8 +77,12 @@ public final class ServerExchange implements AutoCloseable {
         this.peerAddress = peerLen == 0 ? null : utf8(view.get(ValueLayout.ADDRESS, PEER_PTR), peerLen);
         this.peerPort = Short.toUnsignedInt(view.get(ValueLayout.JAVA_SHORT, PEER_PORT));
         this.localPort = Short.toUnsignedInt(view.get(ValueLayout.JAVA_SHORT, LOCAL_PORT));
-        this.headerBlock = owned(view.get(ValueLayout.ADDRESS, HEADERS_PTR), view.get(ValueLayout.JAVA_LONG, HEADERS_LEN),
-                view.get(ValueLayout.JAVA_LONG, HEADERS_CAP));
+        MemorySegment headers = view.get(ValueLayout.ADDRESS, HEADERS_PTR);
+        long headersLen = view.get(ValueLayout.JAVA_LONG, HEADERS_LEN);
+        this.headerAddress = headers.address();
+        this.headerCapacity = view.get(ValueLayout.JAVA_LONG, HEADERS_CAP);
+        this.headerBlock = headers.equals(MemorySegment.NULL) || headersLen == 0
+                ? MemorySegment.NULL : headers.reinterpret(headersLen);
         this.body = owned(view.get(ValueLayout.ADDRESS, BODY_PTR), view.get(ValueLayout.JAVA_LONG, BODY_LEN),
                 view.get(ValueLayout.JAVA_LONG, BODY_CAP));
     }
@@ -92,7 +98,12 @@ public final class ServerExchange implements AutoCloseable {
         return len == 0 ? "" : new String(ptr.reinterpret(len).toArray(ValueLayout.JAVA_BYTE), StandardCharsets.UTF_8);
     }
 
-    /** Ties freeing to reachability (no per-request arena close, which stalls every JVM thread). */
+    /**
+     * Ties freeing to reachability (no per-request arena close, which stalls every JVM thread). For
+     * what the application can hold on to (the body): a stale view then reads zeros, never freed
+     * memory. Costs a Cleaner registration, so the header block, which never leaves this class, is
+     * freed directly instead.
+     */
     private static MemorySegment owned(MemorySegment ptr, long len, long cap) {
         if (ptr.equals(MemorySegment.NULL) || len == 0) {
             return MemorySegment.NULL;
@@ -318,8 +329,10 @@ public final class ServerExchange implements AutoCloseable {
         if (!body.equals(MemorySegment.NULL)) {
             body.fill((byte) 0);
         }
-        if (!headerBlock.equals(MemorySegment.NULL)) {
-            headerBlock.fill((byte) 0);
+        MemorySegment h = headerBlock;
+        if (!h.equals(MemorySegment.NULL)) {
+            headerBlock = MemorySegment.NULL; // later reads find no headers
+            ForeignBridge.wipeAndFree(headerAddress, h.byteSize(), headerCapacity);
         }
     }
 
@@ -338,19 +351,37 @@ public final class ServerExchange implements AutoCloseable {
         if (headers == null || headers.isEmpty()) {
             return new byte[0];
         }
-        ByteArrayOutputStream out = new ByteArrayOutputStream(256);
-        headers.forEach((name, values) -> {
+        // Sized exactly first, then filled: no growing buffer and no second copy per answer.
+        int size = 0;
+        for (Map.Entry<String, List<String>> e : headers.entrySet()) {
+            String name = e.getKey();
             checkHeaderText(name);
-            byte[] n = name.getBytes(StandardCharsets.ISO_8859_1);
-            for (String v : values) {
+            for (String v : e.getValue()) {
                 checkHeaderText(v);
-                out.writeBytes(n);
-                out.write(0);
-                out.writeBytes(v.getBytes(StandardCharsets.ISO_8859_1));
-                out.write(0);
+                size += name.length() + v.length() + 2;
             }
-        });
-        return out.toByteArray();
+        }
+        byte[] out = new byte[size];
+        int at = 0;
+        for (Map.Entry<String, List<String>> e : headers.entrySet()) {
+            String name = e.getKey();
+            for (String v : e.getValue()) {
+                at = latin1(name, out, at);
+                out[at++] = 0;
+                at = latin1(v, out, at);
+                out[at++] = 0;
+            }
+        }
+        return out;
+    }
+
+    /** ISO-8859-1 into {@code out} at {@code at} (characters outside it become '?', as getBytes does). */
+    private static int latin1(String s, byte[] out, int at) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            out[at++] = c <= 0xFF ? (byte) c : (byte) '?';
+        }
+        return at;
     }
 
     /** NUL would break the packed format; CR/LF would allow response splitting. */

@@ -61,6 +61,45 @@ def slope_per_hour(ts_ms, ys):
     return (n * sxy - sx * sy) / d if d else None
 
 
+GEN_BOUND_PCT = 85  # the load generator used this much of its machine: the run measured the generator
+
+
+def bucket_lo_ns(i):
+    """Lower edge of an engine phase-histogram bucket (four per power of two, see engineHistograms())."""
+    return float(i) if i < 4 else float((4 + i % 4) << (i // 4 - 1))
+
+
+def phase_tails(runs):
+    """Per engine phase, p50/p99/p99.9 in microseconds of what the runs added (after minus before)."""
+    delta = {}
+    for r in runs:
+        b, a = (r.get("stats_before") or {}).get("phase_hist"), (r.get("stats_after") or {}).get("phase_hist")
+        if not (b and a):
+            continue
+        for phase, pairs in a.items():
+            d = delta.setdefault(phase, defaultdict(int))
+            for i, c in pairs:
+                d[i] += c
+            for i, c in b.get(phase, []):
+                d[i] -= c
+    out = {}
+    for phase, d in delta.items():
+        items = sorted((i, c) for i, c in d.items() if c > 0)
+        total = sum(c for _, c in items)
+        if not total:
+            continue
+
+        def pct(q):
+            want, seen = total * q, 0
+            for i, c in items:
+                seen += c
+                if seen >= want:
+                    return round(bucket_lo_ns(i) * 1.1 / 1000, 1)  # middle of the bucket
+            return None
+        out[phase] = {"n": total, "p50_us": pct(0.5), "p99_us": pct(0.99), "p999_us": pct(0.999)}
+    return out
+
+
 class Report:
     def __init__(self, events):
         self.ev = events
@@ -82,9 +121,9 @@ class Report:
 
     # ---- throughput -------------------------------------------------------------------------
 
-    def throughput(self):
+    def throughput(self, exp="throughput"):
         groups = defaultdict(list)
-        for e in self.by["throughput"]:
+        for e in self.by[exp]:
             if e.get("type") == "measurement":
                 groups[(e["config"], e["scenario"])].append(e)
         rows, bad = [], 0
@@ -111,18 +150,26 @@ class Report:
                 "cpu_us_req": sum(r["server_cpu_s"] for r in runs) * 1e6 / max(1, reqs),
                 "heap_b_req": alloc / n if n else None,
                 "mb_s": mean([r["result"].get("mb_per_s") for r in runs]),
+                "gen_util_pct": mean([r["result"].get("gen_util_pct") for r in runs]),
+                "gen_cpu_us_req": mean([r["result"].get("gen_cpu_us_per_req") for r in runs]),
+                "gen_engine": next((r["result"].get("engine") for r in runs if r["result"].get("engine")), None),
+                "gen_bound": any((r["result"].get("gen_util_pct") or 0) >= GEN_BOUND_PCT for r in runs),
+                "phases": phase_tails(runs),
                 "errors": errors, "shed": sum(r["result"].get("shed", 0) for r in runs)})
         series = {}
-        for e in self.by["throughput"]:
+        for e in self.by[exp]:
             if e.get("type") == "tick" and e.get("round", 1) == 1 and e.get("phase") != "drain":
                 k = f'{e["config"]}|{e["scenario"]}'
                 s = series.setdefault(k, {"x": [], "rps": [], "p99_us": []})
                 s["x"].append(len(s["x"]) + 1); s["rps"].append(e["rps"]); s["p99_us"].append(e["p99_us"])
         series = {k: {"x": v["x"][-120:], "rps": v["rps"][-120:], "p99_us": v["p99_us"][-120:]} for k, v in series.items()}
         best = max(rows, key=lambda r: r["rps_mean"], default=None)
+        bound = sorted({r["config"] for r in rows if r["gen_bound"]})
+        profiles = {e.get("config"): e.get("profile") for e in self.by[exp] if e.get("type") == "profile"}
         return {"verdict": "fail" if bad else ("pass" if rows else "none"),
+                "warnings": ([f'load generator at {GEN_BOUND_PCT}%+ of its machine for {", ".join(bound)}: those numbers are the generator\'s limit, not the server\'s'] if bound else []),
                 "headline": (f'{len(rows)} measurements; best {best["config"]} {best["scenario"]} at {best["rps_mean"]:,.0f} req/s' if best else "no measurements"),
-                "table": rows, "series": series}
+                "table": rows, "series": series, "profiles": profiles}
 
     # ---- ramp ---------------------------------------------------------------------------------
 
@@ -144,9 +191,13 @@ class Report:
                 steps.append({"fraction": r["fraction"], "offered": offered, "served": served, "served_pct": pct,
                               "p50_us": res["p50_us"], "p99_us": res["p99_us"], "p999_us": res["p999_us"],
                               "shed": res.get("shed", 0), "errors": res["errors"],
-                              "cpu_us_req": r["server_cpu_s"] * 1e6 / n if n else None, "ok": ok})
+                              "cpu_us_req": r["server_cpu_s"] * 1e6 / n if n else None, "ok": ok,
+                              "gen_util_pct": res.get("gen_util_pct")})
             knee = max((s["offered"] for s in steps if s["ok"]), default=None)
-            configs[config] = {"peak_rps": closed[0]["result"]["rps"] if closed else None, "steps": steps, "knee": knee}
+            peak = closed[0]["result"] if closed else {}
+            configs[config] = {"peak_rps": peak.get("rps"), "steps": steps, "knee": knee,
+                               "gen_util_pct": peak.get("gen_util_pct"),
+                               "gen_bound": (peak.get("gen_util_pct") or 0) >= GEN_BOUND_PCT or any((s["gen_util_pct"] or 0) >= GEN_BOUND_PCT for s in steps)}
         series = {}
         for e in self.by["ramp"]:
             if e.get("type") == "tick" and e.get("phase") == "measure":
@@ -157,6 +208,61 @@ class Report:
         return {"verdict": "info" if configs else "none",
                 "headline": ("; ".join(f'{c}: knee {k:,}/s' if k else f'{c}: below the lowest step' for c, k in knees.items()) or "no steps"),
                 "slo_us": slo, "configs": configs, "series": series}
+
+    # ---- capacity and break ----------------------------------------------------------------------
+
+    def capacity(self):
+        st = self.settings.get("capacity", {})
+        planned = str(st.get("variants", "")).split()
+        levels, info = defaultdict(list), {}
+        for e in self.by["capacity"]:
+            if e.get("type") == "measurement":
+                r = e.get("result") or {}
+                started, ended = e.get("started"), e.get("t")
+                wall = max(1.0, ((ended or 0) - (started or 0)) / 1000)
+                levels[e["config"]].append({
+                    "stage": e.get("stage"), "users": e.get("users"), "started": started, "ended": ended,
+                    "pass": bool(e.get("pass")), "reason": e.get("reason") or "",
+                    "p50_us": r.get("p50_us"), "p95_us": r.get("p95_us"), "p99_us": r.get("p99_us"),
+                    "err_pct": e.get("error_pct"), "rps": r.get("rps"), "rss_mb": e.get("rss_mb"),
+                    "cpu_pct": 100 * (e.get("server_cpu_s") or 0) / wall})
+            elif e.get("type") == "variant":
+                i = info.setdefault(e["config"], {})
+                if e.get("state") == "start":
+                    i["started"] = e["t"]
+                else:
+                    i.update(ended=e["t"], max_users=e.get("max_users"), recovered=e.get("recovered"), began=e.get("started", True))
+        order = planned + [c for c in info if c not in planned]
+        configs, best = {}, None
+        for c in order:
+            ls = sorted(levels.get(c, []), key=lambda l: l["started"] or 0)
+            i = info.get(c, {})
+            passed = [l for l in ls if l["stage"] == "search" and l["pass"]]
+            top = max(passed, key=lambda l: l["users"], default=None)
+            over = [l for l in ls if l["stage"] == "overload"]
+            rec = next((l for l in ls if l["stage"] == "recover"), None)
+            fail = next((l for l in sorted(ls, key=lambda l: l["users"]) if l["stage"] == "search" and not l["pass"]), None)
+            configs[c] = {
+                "state": "done" if "ended" in i else ("running" if "started" in i else "queued"),
+                "started": i.get("started"), "ended": i.get("ended"),
+                "max_users": top["users"] if top else (0 if "ended" in i else None),
+                "at_max": top, "first_fail": fail,
+                "recovered": (rec["pass"] if rec else (False if over and i.get("recovered") is False else None)),
+                "overload": [{k: l[k] for k in ("users", "pass", "reason", "err_pct", "p99_us", "rps", "rss_mb")} for l in over],
+                "levels": ls}
+            if top and (best is None or top["users"] > best[1]):
+                best = (c, top["users"])
+        done = [c for c in order if configs[c]["state"] == "done"]
+        times = [l["started"] for v in configs.values() for l in v["levels"] if l["started"]] + [v["started"] for v in configs.values() if v["started"]]
+        ends = [l["ended"] for v in configs.values() for l in v["levels"] if l["ended"]]
+        return {"verdict": "info" if done else "none",
+                "headline": ("; ".join(f'{c} {configs[c]["max_users"]:,} users' for c in done if configs[c]["max_users"] is not None) or "no variant finished yet"),
+                "best": {"config": best[0], "users": best[1]} if best else None,
+                "sla": {"p95_ms": float(st.get("p95_ms", 500)), "p99_ms": float(st.get("p99_ms", 1000)), "error_pct": float(st.get("error_pct", 1)),
+                        "memory_mb": float(st.get("memory_mb", 2048)), "cores": int(st.get("server_cores", 1)), "think": st.get("think", "3000-10000"),
+                        "seconds": int(st.get("seconds", 300))},
+                "t0": min(times) if times else None, "t1": max(ends) if ends else None,
+                "order": order, "configs": configs}
 
     # ---- scans (memory proofs, scan under load) ---------------------------------------------------
 
@@ -272,6 +378,8 @@ class Report:
             elif exp == "ramp": body = self.ramp()
             elif exp in ("memory", "scan"): body = self.scans(exp)
             elif exp == "correct": body = self.correct()
+            elif exp == "client": body = self.throughput("client")
+            elif exp == "capacity": body = self.capacity()
             elif exp == "soak": body = self.soak()
             elif exp == "db": body = self.db()
             if st["state"] == "failed" and body.get("verdict") in (None, "none", "pass", "info"):

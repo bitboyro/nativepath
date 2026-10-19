@@ -29,6 +29,27 @@ phase 1; memory proofs; benchmark suite and `np-bench` with a live dashboard (th
 5. PostgreSQL: Hibernate/JPA compatibility (metadata, arrays, LOBs, savepoints), column encryption,
    then MySQL/MariaDB and SQL Server; R2DBC.
 6. SFTP/SSH, then LDAP, each with the same promise and the same proof.
-7. HTTP/2 and HTTP/3, SIMD parsing, `io_uring`, certificate hot-reloading, streaming server bodies.
+7. HTTP/3, SIMD parsing, certificate hot-reloading, streaming server bodies.
+
+## Later, with the reasons
+
+- **HTTP/2.** Most HTTPS traffic is h2 and Netty and Tomcat both serve it, so until we do, our TLS
+  result only covers HTTP/1.1 clients. Needs: HPACK with a header table size of 0 (a dynamic table
+  would keep header values, secrets included, for the life of the connection), and limits against
+  Rapid Reset and similar abuse.
+- **Kernel TLS.** Moves record encryption into the kernel (`sendfile` stays zero-copy). Only helps
+  large responses; small ones pay the setup. The `tls` kernel module must be loaded on the host.
+- **`io_uring`.** Fewer syscalls per request. Docker's default seccomp profile blocks it and recent
+  RHEL kernels disable it by default, so it cannot be on by default, and a container needs a custom
+  profile.
+- **Break test, the rest.** `capacity` covers the SLA search, overload and recovery. Still to do:
+  a kernel-enforced memory limit (it is checked, not enforced), hostile clients (slow readers, slow
+  headers, oversized bodies), an overload soak, a database-backed workload, TLS.
+- **Detached runs.** A run that survives the controller: ssh keepalives, start on the server host and
+  collect afterwards, "interrupted at N of M minutes" as a verdict apart from failed.
+- **Ramp on common absolute rates**, with a "not saturated" flag, so servers of different speeds meet
+  at the same steps.
+- **Results record** the Netty TLS provider and each server's log.
+- Run Tomcat/MVC configurations on the two VMs.
 
 Not planned: Oracle (no mature pure-Rust protocol implementation).

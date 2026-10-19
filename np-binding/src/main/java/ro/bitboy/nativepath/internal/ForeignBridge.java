@@ -49,6 +49,7 @@ public final class ForeignBridge {
     private static final MethodHandle SERVER_STOP;
     private static final MethodHandle SERVER_DESTROY;
     private static final MethodHandle SERVER_STATS;
+    private static final MethodHandle SERVER_PHASE_HIST;
     private static final MethodHandle TEST_SERVER_REQUEST;
     private static final MethodHandle SET_ISOLATE_ALL;
     private static final MethodHandle STREAM_HEADERS;
@@ -298,6 +299,11 @@ public final class ForeignBridge {
 
             SERVER_STATS = linker.downcallHandle(
                 lookup.find("np_server_stats").orElseThrow(),
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG)
+            );
+
+            SERVER_PHASE_HIST = linker.downcallHandle(
+                lookup.find("np_server_phase_hist").orElseThrow(),
                 FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG)
             );
 
@@ -713,6 +719,15 @@ public final class ForeignBridge {
             return (long) SERVER_STATS.invokeExact(server, out, n);
         } catch (Throwable t) {
             throw new RuntimeException("Failed to invoke np_server_stats", t);
+        }
+    }
+
+    /** Writes up to {@code n} phase-histogram counts to {@code out}; see {@code NativePathHttpServer.engineHistograms()}. */
+    public static long serverPhaseHist(MemorySegment server, MemorySegment out, long n) {
+        try {
+            return (long) SERVER_PHASE_HIST.invokeExact(server, out, n);
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to invoke np_server_phase_hist", t);
         }
     }
 

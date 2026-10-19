@@ -300,6 +300,9 @@ impl ResponseWriter {
 /// a few clock reads and relaxed atomic adds per request.
 #[derive(Default)]
 pub struct EngineStats {
+    /// The same five phases as `read_ns`, `queue_ns`, `handler_ns`, `respond_ns`, `reply_ns` (in
+    /// that order), kept as histograms so the tail shows, not only the mean.
+    pub hist: [PhaseHist; PHASES],
     /// Requests answered by a worker.
     pub requests: AtomicU64,
     /// Engine handler entry (head parsed) until queued for the worker: body read and header packing.
@@ -320,9 +323,51 @@ pub struct EngineStats {
     pub stolen: AtomicU64,
 }
 
+/// Phases kept as histograms: read, queue, handler, respond, reply.
+pub const PHASES: usize = 5;
+/// Buckets per phase: four per power of two of nanoseconds, up to about 2^40 ns.
+pub const HIST_BUCKETS: usize = 160;
+
+/// Counts of durations in log-scale buckets (four per octave, so a bucket spans about 19% to 25%).
+/// One relaxed atomic add per recorded duration.
+pub struct PhaseHist([AtomicU64; HIST_BUCKETS]);
+
+impl Default for PhaseHist {
+    fn default() -> Self {
+        PhaseHist(std::array::from_fn(|_| AtomicU64::new(0)))
+    }
+}
+
+impl PhaseHist {
+    fn bucket(ns: u64) -> usize {
+        if ns < 4 {
+            return ns as usize;
+        }
+        let octave = 63 - ns.leading_zeros() as usize;
+        let sub = ((ns >> (octave - 2)) & 3) as usize;
+        ((octave - 1) * 4 + sub).min(HIST_BUCKETS - 1)
+    }
+
+    fn record(&self, ns: u64) {
+        self.0[Self::bucket(ns)].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The bucket counts so far.
+    pub fn counts(&self) -> [u64; HIST_BUCKETS] {
+        std::array::from_fn(|i| self.0[i].load(Ordering::Relaxed))
+    }
+}
+
 impl EngineStats {
-    fn add(counter: &AtomicU64, since: Instant) {
-        counter.fetch_add(since.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    fn add(counter: &AtomicU64, hist: &PhaseHist, since: Instant) {
+        let ns = since.elapsed().as_nanos() as u64;
+        counter.fetch_add(ns, Ordering::Relaxed);
+        hist.record(ns);
+    }
+
+    /// Histogram counts, `PHASES` rows of `HIST_BUCKETS`, flattened.
+    pub fn hist_snapshot(&self) -> Vec<u64> {
+        self.hist.iter().flat_map(|h| h.counts()).collect()
     }
 
     /// `[requests, read_ns, queue_ns, handler_ns, respond_ns, reply_ns, shed_requests,
@@ -393,14 +438,14 @@ impl ServerRequest {
     /// Fails if a header is invalid; the client then gets 500.
     pub fn respond(mut self, status: u16, headers: &[u8], body: &[u8]) -> Result<(), String> {
         let start = Instant::now();
-        EngineStats::add(&self.lane.stats.handler_ns, self.taken_at);
+        EngineStats::add(&self.lane.stats.handler_ns, &self.lane.stats.hist[2], self.taken_at);
         let reply = self.reply.take().ok_or("already answered")?;
         let parsed = parse_packed_headers(headers)?;
         if StatusCode::from_u16(status).is_err() {
             return Err(format!("invalid status {status}"));
         }
         let body = EngineBody::Full(Full::new(Bytes::copy_from_slice(body)));
-        EngineStats::add(&self.lane.stats.respond_ns, start);
+        EngineStats::add(&self.lane.stats.respond_ns, &self.lane.stats.hist[3], start);
         // The client may have gone; that is not the worker's error.
         let _ = reply.send(Reply {
             status,
@@ -423,7 +468,7 @@ impl ServerRequest {
         content_length: Option<u64>,
     ) -> Result<ResponseWriter, String> {
         let start = Instant::now();
-        EngineStats::add(&self.lane.stats.handler_ns, self.taken_at);
+        EngineStats::add(&self.lane.stats.handler_ns, &self.lane.stats.hist[2], self.taken_at);
         let reply = self.reply.take().ok_or("already answered")?;
         let mut parsed = parse_packed_headers(headers)?;
         if StatusCode::from_u16(status).is_err() {
@@ -433,7 +478,7 @@ impl ServerRequest {
             parsed.push((CONTENT_LENGTH, HeaderValue::from(n)));
         }
         let (tx, rx) = mpsc::channel(STREAM_CHUNKS);
-        EngineStats::add(&self.lane.stats.respond_ns, start);
+        EngineStats::add(&self.lane.stats.respond_ns, &self.lane.stats.hist[3], start);
         // If the client has gone, writes fail instead.
         let _ = reply.send(Reply {
             status,
@@ -531,7 +576,7 @@ impl LaneQueue {
 
     fn pop(&self) -> Option<ServerRequest> {
         let mut r = self.ready.lock().ok()?.pop_front()?;
-        EngineStats::add(&self.stats.queue_ns, r.queued_at);
+        EngineStats::add(&self.stats.queue_ns, &self.stats.hist[1], r.queued_at);
         r.taken_at = Instant::now();
         Some(r)
     }
@@ -1211,7 +1256,7 @@ async fn handle(
         local: addrs.local,
         _budget: budget,
     };
-    EngineStats::add(&queue.stats.read_ns, entered);
+    EngineStats::add(&queue.stats.read_ns, &queue.stats.hist[0], entered);
     match queue.ready.lock() {
         // Checked again: the queue may have filled while the body was read. The request (and its
         // wiped buffers) is dropped.
@@ -1232,7 +1277,7 @@ async fn handle(
     }
     match reply_rx.await {
         Ok(reply) => {
-            EngineStats::add(&queue.stats.reply_ns, reply.answered_at);
+            EngineStats::add(&queue.stats.reply_ns, &queue.stats.hist[4], reply.answered_at);
             queue.stats.requests.fetch_add(1, Ordering::Relaxed);
             let mut r = Response::new(reply.body);
             *r.status_mut() =
