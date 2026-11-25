@@ -98,7 +98,7 @@
         { "key": "break_factors", "label": "Overload factors", "type": "text", "default": "1.5 2", "check": "1.5" },
         { "key": "break_seconds", "label": "Seconds per overload level", "type": "int", "default": 60, "check": 5, "min": 1, "max": 7200, "unit": "s" },
         { "key": "recover_seconds", "label": "Seconds to recover", "type": "int", "default": 60, "check": 5, "min": 1, "max": 7200, "unit": "s" },
-        { "key": "max_connections", "label": "NativePath connection limit", "type": "int", "default": 50000, "min": 1, "max": 10000000, "help": "Raised from the default of 10,000 so the limit measured is capacity. Tomcat and Netty keep their own." },
+        { "key": "max_connections", "label": "Server connection limit", "type": "int", "default": 100000, "min": 1, "max": 10000000, "help": "Applied to every server and verified before measurement. Must exceed max_users times the largest overload factor." },
         { "key": "mix", "label": "Workload mix", "type": "text", "default": "GET /hello 50; GET /payload?size=4096 30; POST /json @np-benchmarks/scripts/order.json 20", "help": "METHOD /path [body bytes or @file] weight; separated by ;" }
       ]
     },

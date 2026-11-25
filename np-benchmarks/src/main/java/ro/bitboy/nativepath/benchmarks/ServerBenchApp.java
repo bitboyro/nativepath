@@ -41,6 +41,27 @@ import java.util.concurrent.ConcurrentHashMap;
 @EnableAutoConfiguration
 public class ServerBenchApp {
 
+    // Both embedded servers are on the benchmark classpath; never rely on Boot's ordering.
+    @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+            name = "nativepath.http.server.enabled", havingValue = "false")
+    org.springframework.boot.web.embedded.netty.NettyReactiveWebServerFactory nettyFactory() {
+        var factory = new org.springframework.boot.web.embedded.netty.NettyReactiveWebServerFactory();
+        var connections = new CapacityConnections();
+        if (CapacityConnections.limit() > 0) {
+            factory.addServerCustomizers(http -> http.doOnConnection(c -> connections.accept(c.channel())));
+        }
+        return factory;
+    }
+
+    @Bean
+    org.springframework.boot.web.server.WebServerFactoryCustomizer<ro.bitboy.nativepath.spring.server.NativePathReactiveWebServerFactory>
+            capacityLimit() {
+        return factory -> {
+            if (CapacityConnections.limit() > 0) factory.setMaxConnections((long) CapacityConnections.limit());
+        };
+    }
+
     record Order(String id, String customer, int quantity, double price, java.util.List<String> tags) {}
 
     private static final Map<Integer, byte[]> PAYLOADS = new ConcurrentHashMap<>();
@@ -48,6 +69,14 @@ public class ServerBenchApp {
     @Bean
     RouterFunction<ServerResponse> routes(org.springframework.context.ApplicationContext ctx) {
         return RouterFunctions.route()
+                .GET("/__capacity", req -> {
+                    var web = ((org.springframework.boot.web.reactive.context.ReactiveWebServerApplicationContext) ctx).getWebServer();
+                    String actual = web instanceof ro.bitboy.nativepath.spring.server.NativePathWebServer
+                            ? "spring_nativepath" : web instanceof org.springframework.boot.web.embedded.netty.NettyWebServer
+                            ? "spring_netty" : "unexpected:" + web.getClass().getSimpleName();
+                    return ServerResponse.ok().contentType(MediaType.APPLICATION_JSON)
+                            .bodyValue(CapacityConnections.json(actual, CapacityConnections.limit()));
+                })
                 .GET("/__stats", req -> {
                     var web = ((org.springframework.boot.web.reactive.context.ReactiveWebServerApplicationContext) ctx).getWebServer();
                     var engine = web instanceof ro.bitboy.nativepath.spring.server.NativePathWebServer e ? e.server() : null;

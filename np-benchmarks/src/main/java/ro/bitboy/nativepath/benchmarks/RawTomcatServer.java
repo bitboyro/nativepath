@@ -27,9 +27,11 @@ public class RawTomcatServer {
         tomcat.setBaseDir(System.getProperty("java.io.tmpdir") + "/np-raw-tomcat-" + port);
         Connector connector = new Connector("org.apache.coyote.http11.Http11NioProtocol");
         connector.setPort(port);
+        if (CapacityConnections.limit() > 0) connector.setProperty("maxConnections", Integer.toString(CapacityConnections.limit()));
         connector.setProperty("address", System.getenv().getOrDefault("BENCH_BIND", "127.0.0.1"));
         tomcat.setConnector(connector);
         Context ctx = tomcat.addContext("", null);
+        ctx.getServletContext().setAttribute("capacity.protocol", connector.getProtocolHandler());
         Tomcat.addServlet(ctx, "bench", new Bench());
         ctx.addServletMappingDecoded("/", "bench");
         tomcat.start();
@@ -43,7 +45,11 @@ public class RawTomcatServer {
             String path = req.getRequestURI();
             byte[] body;
             String type = "text/plain";
-            if (path.equals("/payload")) {
+            if (path.equals("/__capacity")) {
+                int limit = ((org.apache.coyote.http11.AbstractHttp11Protocol<?>) req.getServletContext().getAttribute("capacity.protocol")).getMaxConnections();
+                body = CapacityConnections.json("raw_tomcat", limit).getBytes(StandardCharsets.US_ASCII);
+                type = "application/json";
+            } else if (path.equals("/payload")) {
                 String size = req.getParameter("size");
                 body = new byte[size == null ? 0 : Integer.parseInt(size)];
                 Arrays.fill(body, (byte) 'x');

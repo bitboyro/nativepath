@@ -2,6 +2,11 @@
 
 One line per change, newest release first. Features, Fixes, Changes; nothing else.
 
+## Unreleased
+
+### Fixes
+- Capacity benchmarks verify server identity, share connection limits, report search bounds, and fail on unsuccessful recovery.
+
 ## 0.1.2
 
 ### Features

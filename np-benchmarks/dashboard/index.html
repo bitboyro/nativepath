@@ -715,6 +715,7 @@ function capFromEvents(c) {
   order.forEach(n => { const v = configs[n]; v.levels.sort((a, b) => a.started - b.started);
     const ok = v.levels.filter(l => l.stage === 'search' && l.pass); v.at_max = ok.reduce((a, l) => !a || l.users > a.users ? l : a, null);
     v.max_users = v.at_max ? v.at_max.users : (v.state === 'done' ? 0 : null);
+    v.search_capped = !!v.at_max && !v.levels.some(l => l.stage === 'search' && !l.pass) && v.at_max.users >= Number(setting('capacity', 'max_users', 30000));
     v.first_fail = v.levels.filter(l => l.stage === 'search' && !l.pass).sort((a, b) => a.users - b.users)[0] || null;
     v.overload = v.levels.filter(l => l.stage === 'overload');
     const rec = v.levels.find(l => l.stage === 'recover'); if (rec) v.recovered = rec.pass;
@@ -738,7 +739,7 @@ Rv.capacity = c => {
     const bars = (v.levels || []).map(l => { const h = Math.max(4, l.users / maxTried * 100);
       return `<i class="bar ${barClass(l)}" style="left:${x(l.started)}%;width:${(x(l.ended) - x(l.started)).toFixed(3)}%;height:${h.toFixed(1)}%" title="${esc(stageName[l.stage] || l.stage)} · ${num(l.users)} users · ${l.pass ? 'passed' : 'failed: ' + esc(l.reason)} · p99 ${ms(l.p99_us)} · ${num(l.rps)} req/s"></i>`; }).join('');
     const cur = v.cur ? `<i class="bar run" style="left:${x(v.cur.started)}%;width:${Math.max(.3, x(now) - x(v.cur.started)).toFixed(3)}%;height:${Math.max(4, v.cur.users / maxTried * 100).toFixed(1)}%" title="running: ${num(v.cur.users)} users"></i>` : '';
-    const fin = v.state === 'done' && v.ended ? `<i class="fin" style="left:${x(v.ended)}%"></i><span class="flag" style="left:${x(v.ended)}%">${v.max_users ? num(v.max_users) + ' users' : 'none sustained'}</span>` : '';
+    const fin = v.state === 'done' && v.ended ? `<i class="fin" style="left:${x(v.ended)}%"></i><span class="flag" style="left:${x(v.ended)}%">${v.max_users ? (v.search_capped ? '≥ ' : '') + num(v.max_users) + ' users' : 'none sustained'}</span>` : '';
     const lbl = v.state === 'queued' ? '<span class="note" style="position:absolute;left:10px;top:18px">waiting</span>' : '';
     return `<div class="lane"><div class="nm"><span class="sw" style="background:${cfgColor(n)}"></span>${esc(n)}</div><div class="track">${bars}${cur}${fin}${lbl}</div></div>`; }).join('');
   const step = niceStep(span), ticks = []; for (let t = 0; t <= span; t += step) ticks.push(t);
@@ -747,14 +748,15 @@ Rv.capacity = c => {
     legend([['passed', 'var(--good)'], ['failed', 'var(--crit)'], ['overload on purpose', 'var(--warn)'], ['recovery', 'var(--s1)'], ['running', 'var(--s1)']]));
   // Users sustained, compared.
   const done = names.filter(n => cf[n].max_users != null), best = Math.max(1, ...done.map(n => cf[n].max_users));
-  const cmp = card('c4', 'Users sustained', `${sla.cores} core · ${num(sla.memory_mb)} MB`, done.length ? done.map(n => `<div class="route" style="grid-template-columns:minmax(120px,1.6fr) minmax(0,2fr) 64px"><div>${esc(n)}</div><div class="bar"><i style="width:${(cf[n].max_users / best * 100).toFixed(1)}%;background:${cfgColor(n)}"></i></div><div class="num" style="text-align:right">${num(cf[n].max_users)}</div></div>`).join('') +
+  const cmp = card('c4', 'Users sustained', `${sla.cores} core · ${num(sla.memory_mb)} MB`, done.length ? done.map(n => `<div class="route" style="grid-template-columns:minmax(120px,1.6fr) minmax(0,2fr) 64px"><div>${esc(n)}</div><div class="bar"><i style="width:${(cf[n].max_users / best * 100).toFixed(1)}%;background:${cfgColor(n)}"></i></div><div class="num" style="text-align:right">${cf[n].search_capped ? '≥ ' : ''}${num(cf[n].max_users)}</div></div>`).join('') +
     `<p class="note" style="margin-top:8px">p95 ≤ ${num(sla.p95_ms)} ms, p99 ≤ ${num(sla.p99_ms)} ms, errors under ${num(sla.error_pct)}%, users pause ${esc(sla.think)} ms between requests, ${dur(sla.seconds * 1000)} per level.</p>` : '<p class="note">The first server has not finished yet.</p>');
   // One card per server.
   const cards = names.map(n => { const v = cf[n], a = v.at_max;
     const st = v.state === 'done' ? chip('good', 'finished') : v.state === 'running' ? chip('run', v.cur ? `${num(v.cur.users)} users, ${stageName[v.cur.stage] || v.cur.stage}` : 'starting') : chip('idle', 'queued');
     const body = v.state === 'queued' ? '<p class="note">Waiting for its turn.</p>' :
-      `<div class="big">${v.max_users == null ? '–' : num(v.max_users)}<small> users</small></div>` +
+      `<div class="big">${v.max_users == null ? '–' : (v.search_capped ? '≥ ' : '') + num(v.max_users)}<small> users</small></div>` +
       (a ? kv([['req/s', num(a.rps)], ['p95', ms(a.p95_us)], ['p99', ms(a.p99_us)], ['memory', num(a.rss_mb) + ' MB'], ['CPU', num(a.cpu_pct) + '%'], ['errors', num(a.err_pct, 2) + '%']]) : '') +
+      (v.search_capped ? '<p class="note">Search limit reached; maximum capacity not established.</p>' : '') +
       (v.first_fail ? `<p class="note" style="margin-top:8px">${chip('warn', 'first failed')} ${num(v.first_fail.users)} users: ${esc(v.first_fail.reason)}</p>` : '') +
       (v.state === 'done' && (v.overload || []).length ? `<p class="note" style="margin-top:6px">Overload ${v.overload.map(o => `${num(o.users)} users ${o.pass ? 'held' : 'broke the SLA'}`).join(', ')}; ${v.recovered === true ? chip('good', 'recovered') : v.recovered === false ? chip('crit', 'did not recover') : ''}</p>` : '');
     return card('c4', `<span class="sw" style="background:${cfgColor(n)}"></span>${esc(n)}`, st, body); }).join('');
@@ -1004,7 +1006,7 @@ function drawNew() {
   head({ title: 'New run', kind: S.newMode === 'check' ? 'quick check' : 'full run', blurb: S.newMode === 'check' ? 'A quick pass over the chosen experiments, to prove the setup works. It measures nothing worth quoting.' : 'The real experiment. Defaults are the values used for published results; change them below.' });
   if (!S.schema) { $('#view').innerHTML = card('c12', 'Loading', '', '<p class="note">Reading the settings…</p>'); return; }
   const sc = S.schema, mode = S.newMode;
-  if (!S.newExps) S.newExps = new Set(sc.experiments.map(e => e.id).filter(e => e !== 'db'));
+  if (!S.newExps) S.newExps = new Set(sc.experiments.map(e => e.id).filter(e => e !== 'db' && e !== 'capacity'));  // as np-bench's default run: the database and capacity (hours) are opt-in
   const run = (S.runs[0] || {}).running;
   const val = (sec, p) => (S.newSet[sec] && S.newSet[sec][p.key] !== undefined) ? S.newSet[sec][p.key] : '';
   const dv = p => mode === 'check' && p.check !== undefined ? p.check : p.default;

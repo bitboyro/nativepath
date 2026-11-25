@@ -226,6 +226,8 @@ class Report:
                     "p50_us": r.get("p50_us"), "p95_us": r.get("p95_us"), "p99_us": r.get("p99_us"),
                     "err_pct": e.get("error_pct"), "rps": r.get("rps"), "rss_mb": e.get("rss_mb"),
                     "cpu_pct": 100 * (e.get("server_cpu_s") or 0) / wall})
+            elif e.get("type") == "policy":
+                info.setdefault(e["config"], {})["policy"] = {k: e.get(k) for k in ("server", "max_connections")}
             elif e.get("type") == "variant":
                 i = info.setdefault(e["config"], {})
                 if e.get("state") == "start":
@@ -246,7 +248,8 @@ class Report:
                 "state": "done" if "ended" in i else ("running" if "started" in i else "queued"),
                 "started": i.get("started"), "ended": i.get("ended"),
                 "max_users": top["users"] if top else (0 if "ended" in i else None),
-                "at_max": top, "first_fail": fail,
+                "at_max": top, "first_fail": fail, "policy": i.get("policy"),
+                "search_capped": bool(top and not fail and top["users"] >= int(st.get("max_users", 30000))),
                 "recovered": (rec["pass"] if rec else (False if over and i.get("recovered") is False else None)),
                 "overload": [{k: l[k] for k in ("users", "pass", "reason", "err_pct", "p99_us", "rps", "rss_mb")} for l in over],
                 "levels": ls}
@@ -256,7 +259,7 @@ class Report:
         times = [l["started"] for v in configs.values() for l in v["levels"] if l["started"]] + [v["started"] for v in configs.values() if v["started"]]
         ends = [l["ended"] for v in configs.values() for l in v["levels"] if l["ended"]]
         return {"verdict": "info" if done else "none",
-                "headline": ("; ".join(f'{c} {configs[c]["max_users"]:,} users' for c in done if configs[c]["max_users"] is not None) or "no variant finished yet"),
+                "headline": ("; ".join(f'{c} {">=" if configs[c]["search_capped"] else ""}{configs[c]["max_users"]:,} users' for c in done if configs[c]["max_users"] is not None) or "no variant finished yet"),
                 "best": {"config": best[0], "users": best[1]} if best else None,
                 "sla": {"p95_ms": float(st.get("p95_ms", 500)), "p99_ms": float(st.get("p99_ms", 1000)), "error_pct": float(st.get("error_pct", 1)),
                         "memory_mb": float(st.get("memory_mb", 2048)), "cores": int(st.get("server_cores", 1)), "think": st.get("think", "3000-10000"),

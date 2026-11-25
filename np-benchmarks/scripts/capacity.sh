@@ -12,9 +12,8 @@
 #   np-benchmarks/scripts/capacity.sh [--server H --client H --server-ip IP --cores N] <out-dir>
 #
 # The server gets SERVER_CORES cores (pinned) and a JVM heap of half of MEMORY_MB; the memory limit is
-# checked against the process's resident size, not enforced by the kernel. NativePath servers get
-# MAX_CONNECTIONS (their default of 10,000 would otherwise be the limit being measured); Tomcat and
-# Netty keep their own defaults.
+# checked against the process's resident size, not enforced by the kernel. Every server gets the
+# same connection ceiling, verified along with its identity before measurement.
 #
 # Settings: NP_CAPACITY_VARIANTS, _SECONDS, _START_USERS, _MAX_USERS, _THINK, _RAMP_S, _P95_MS, _P99_MS,
 # _ERROR_PCT, _SERVER_CORES, _MEMORY_MB, _MAX_BISECT, _BREAK, _BREAK_FACTORS, _BREAK_SECONDS,
@@ -33,12 +32,20 @@ SERVER_CORES=${NP_CAPACITY_SERVER_CORES:-1}; MEMORY_MB=${NP_CAPACITY_MEMORY_MB:-
 MAX_BISECT=${NP_CAPACITY_MAX_BISECT:-4}
 BREAK=${NP_CAPACITY_BREAK:-1}; BREAK_FACTORS=${NP_CAPACITY_BREAK_FACTORS:-1.5 2}
 BREAK_SECONDS=${NP_CAPACITY_BREAK_SECONDS:-60}; RECOVER_SECONDS=${NP_CAPACITY_RECOVER_SECONDS:-60}
-MAXC=${NP_CAPACITY_MAX_CONNECTIONS:-50000}
+MAXC=${NP_CAPACITY_MAX_CONNECTIONS:-100000}
 MIX=${NP_CAPACITY_MIX:-GET /hello 50; GET /payload?size=4096 30; POST /json @np-benchmarks/scripts/order.json 20}
 PORT=18790
 HEAP=$((MEMORY_MB / 2))
 JVM="java --enable-native-access=ALL-UNNAMED -Xms${HEAP}m -Xmx${HEAP}m -cp \$cp ro.bitboy.nativepath.benchmarks"
 
+# A configured ceiling must not be mistaken for overload capacity.
+python3 - "$START_USERS" "$MAX_USERS" "$MAXC" "$BREAK" "$BREAK_FACTORS" <<'PY_CHECK'
+import sys
+start, maximum, ceiling = map(int, sys.argv[1:4])
+factor = max([1.0] + ([float(f) for f in sys.argv[5].split()] if sys.argv[4] == "1" else []))
+if not 0 < start <= maximum or ceiling <= int(maximum * factor):
+    sys.exit("capacity: require 0 < start_users <= max_users and max_connections above every search/overload level")
+PY_CHECK
 stop_on_exit
 echo "== build" >&2
 prepare_server >&2
@@ -46,12 +53,12 @@ prepare_client >&2
 describe_hosts | tee "$OUT_DIR/machines.txt"
 
 start_variant() { # variant -> pid
-  local env="" cmd saved=$CORES pid
+  local env="BENCH_CAPACITY_MAX_CONNECTIONS=$MAXC" cmd saved=$CORES pid
   case $1 in
-    engine_java)      cmd="$JVM.RawServerBench $PORT"; env="NATIVEPATH_SERVER_MAX_CONNECTIONS=$MAXC" ;;
+    engine_java)      cmd="$JVM.RawServerBench $PORT" ;;
     raw_netty)        cmd="$JVM.RawNettyServer $PORT" ;;
     raw_tomcat)       cmd="$JVM.RawTomcatServer $PORT" ;;
-    spring_nativepath) cmd="$JVM.ServerBenchApp nativepath $PORT"; env="NATIVEPATH_SERVER_MAX_CONNECTIONS=$MAXC" ;;
+    spring_nativepath) cmd="$JVM.ServerBenchApp nativepath $PORT" ;;
     spring_netty)     cmd="$JVM.ServerBenchApp netty $PORT" ;;
     *) echo "unknown variant $1" >&2; exit 1 ;;
   esac
@@ -98,6 +105,9 @@ if res is None: reason.append("no result")
 else:
     total = res["requests"] + res["errors"] + res.get("shed", 0)
     err_pct = 100.0 * (res["errors"] + res.get("shed", 0)) / total if total else 100.0
+    if res["requests"] <= 0: reason.append("zero successful requests")
+    if res.get("mismatches", 0): reason.append("response mismatches")
+    if res.get("verified", 0) <= 0: reason.append("no responses verified")
     if res["p95_us"] > $P95_MS * 1000: reason.append("p95 %.0f ms > $P95_MS" % (res["p95_us"] / 1000))
     if res["p99_us"] > $P99_MS * 1000: reason.append("p99 %.0f ms > $P99_MS" % (res["p99_us"] / 1000))
     if err_pct >= $ERROR_PCT: reason.append("%.1f%% errors" % err_pct)
@@ -125,6 +135,14 @@ for v in $VARIANTS; do
   pid=$(start_variant "$v")
   RUNNING_PID=$pid
   wait_up $PORT || { echo "$v did not start" >&2; failed=1; np_event variant "\"exp\":\"capacity\",\"config\":\"$v\",\"state\":\"end\",\"max_users\":0,\"started\":false"; continue; }
+  policy=$(on "$CLIENT" "curl -sf $(server_url "$PORT")/__capacity") || { echo "capacity: cannot verify $v" >&2; exit 1; }
+  python3 - "$policy" "$v" "$MAXC" <<'PY_POLICY'
+import json, sys
+policy = json.loads(sys.argv[1])
+if policy != {"server": sys.argv[2], "max_connections": int(sys.argv[3])}:
+    sys.exit("capacity: server identity or connection policy mismatch: " + str(policy))
+PY_POLICY
+  np_event policy "\"exp\":\"capacity\",\"config\":\"$v\",\"max_connections\":$MAXC,\"server\":\"$v\""
   loadgen "http://$SERVER_IP:$PORT/hello" 32 5 > /dev/null   # warm-up (JIT)
 
   # Search: double until a level fails, then bisect.
@@ -167,5 +185,6 @@ for v in $VARIANTS; do
   np_event variant "\"exp\":\"capacity\",\"config\":\"$v\",\"state\":\"end\",\"max_users\":$last_pass,\"recovered\":$recovered,\"started\":true"
   stop_server "$pid"
   [ "$last_pass" -gt 0 ] || failed=1
+  [ "$recovered" != false ] || failed=1
 done
 exit $failed

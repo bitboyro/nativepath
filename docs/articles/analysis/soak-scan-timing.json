@@ -1,0 +1,20 @@
+{
+  "measurement_ticks": 7200,
+  "recorded_scans": 8,
+  "window_before_start_ms": 1000,
+  "window_after_end_ms": 10000,
+  "ticks_in_windows": 113,
+  "max_tick_p99_us_outside_windows": 153496,
+  "thresholds": [
+    {
+      "tick_p99_above_us": 100000,
+      "ticks": 33,
+      "ticks_in_windows": 32
+    },
+    {
+      "tick_p99_above_us": 1000000,
+      "ticks": 27,
+      "ticks_in_windows": 27
+    }
+  ]
+}

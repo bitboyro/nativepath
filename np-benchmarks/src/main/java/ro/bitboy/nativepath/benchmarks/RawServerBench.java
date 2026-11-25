@@ -39,6 +39,7 @@ public class RawServerBench {
         // The limits must be positive; unset (0) keeps the engine default.
         if (setting("MAX_QUEUED", 0) > 0) builder.maxQueued(setting("MAX_QUEUED", 0));
         if (setting("MAX_CONNECTIONS", 0) > 0) builder.maxConnections(setting("MAX_CONNECTIONS", 0));
+        if (CapacityConnections.limit() > 0) builder.maxConnections(CapacityConnections.limit());
         NativePathHttpServer server = builder.start();
         System.out.println("READY " + server.port() + " lanes=" + server.lanes().size());
         for (ServerLane lane : server.lanes()) {
@@ -46,7 +47,9 @@ public class RawServerBench {
                 while (server.isRunning()) {
                     try (ServerExchange ex = lane.poll(200)) {
                         if (ex == null) continue;
-                        if (ex.target().equals("/__stats")) {
+                        if (ex.target().equals("/__capacity")) {
+                            ex.respond(200, json, CapacityConnections.json("engine_java", CapacityConnections.limit()).getBytes(StandardCharsets.US_ASCII));
+                        } else if (ex.target().equals("/__stats")) {
                             ex.respond(200, json, BenchStats.json(server).getBytes(StandardCharsets.US_ASCII));
                         } else if (ex.target().startsWith("/payload")) {
                             int q = ex.target().indexOf("size=");

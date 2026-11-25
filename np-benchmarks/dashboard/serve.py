@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, urlparse
 HERE = os.path.dirname(os.path.abspath(__file__))
 ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 MODES = ("check", "run")
-EXPERIMENTS = ("preflight", "memory", "throughput", "ramp", "scan", "correct", "soak", "db")
+EXPERIMENTS = ("preflight", "memory", "throughput", "ramp", "scan", "correct", "client", "lanes", "capacity", "soak", "db")
 HOST_RE = re.compile(r"^[A-Za-z0-9._@:-]+$")
 
 

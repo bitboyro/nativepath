@@ -17,3 +17,20 @@
 
 Continuous integration: tests on every push (`ci.yml`); benchmarks and the Linux memory proofs for
 releases or on demand (`bench.yml`).
+
+## Capacity experiment
+
+`capacity` uses one connection ceiling (`max_connections`, default 100,000) for all five
+servers. It must exceed the largest search or overload user count. Before measuring, the
+controller checks `/__capacity` for the expected server identity and applied ceiling. The
+Spring Netty benchmark explicitly selects Netty even with Tomcat on the classpath.
+
+A passing search at `max_users` is a lower bound (shown as ≥), not a measured maximum.
+A level requires successful, verified responses without mismatches; a failed recovery fails
+the experiment. Memory is checked against resident size, not enforced by the kernel.
+Old runs without these checks do not establish comparable capacity. Re-run the experiment
+on two Linux hosts before publishing a capacity comparison.
+
+Regression checks: `python3 np-benchmarks/scripts/test_capacity.py`. After a reactor build,
+`NP_CAPACITY_LIVE_TEST=1 python3 np-benchmarks/scripts/test_capacity.py` also starts all five
+servers using `bench.cp` for dependencies and checks identity, connection limits, and released slots.

@@ -38,12 +38,14 @@ public class RawNettyServer {
         int threads = args.length > 1 ? Integer.parseInt(args[1]) : 0;
         String bind = System.getenv().getOrDefault("BENCH_BIND", "127.0.0.1");
         NioEventLoopGroup group = new NioEventLoopGroup(threads);
+        var connections = new CapacityConnections();
         new ServerBootstrap().group(group).channel(NioServerSocketChannel.class)
                 .option(ChannelOption.SO_BACKLOG, 4096)
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
+                        if (CapacityConnections.limit() > 0) connections.accept(ch);
                         ch.pipeline().addLast(new HttpServerCodec(), new HttpObjectAggregator(8 << 20), new Handler());
                     }
                 }).bind(bind, port).sync();
@@ -57,7 +59,10 @@ public class RawNettyServer {
             String uri = req.uri();
             byte[] body;
             String type = "text/plain";
-            if (uri.startsWith("/payload")) {
+            if (uri.equals("/__capacity")) {
+                body = CapacityConnections.json("raw_netty", CapacityConnections.limit()).getBytes(StandardCharsets.US_ASCII);
+                type = "application/json";
+            } else if (uri.startsWith("/payload")) {
                 int q = uri.indexOf("size=");
                 int size = q < 0 ? 0 : Integer.parseInt(uri.substring(q + 5));
                 body = new byte[size];
